@@ -249,22 +249,12 @@ def get_entradas_for_user(user: models.Usuario, date_str: Optional[str] = None, 
     if not user or not user.roles: return []
     conn = None; entradas_list = []
     try:
-        import logging
-        logging.basicConfig(level=logging.DEBUG)
-        logger = logging.getLogger(__name__)
-        
         conn = get_db_connection(); cursor = conn.cursor()
-        sql = """SELECT DISTINCT e.id, e.Asunto, e.Fecha, e.Area AS AreaName, e.Confidencial, e.Urgente, e.numeroEntrada, e.Tramitado, e.Observaciones, e.tramitadoPor, uc.user AS Tramitado_por_username, e.canalEntrada AS CanalNombre, e.canalEntrada AS CanalId
-                FROM entrada e
-                LEFT JOIN destinatario d ON e.id = d.entrada_id
-                LEFT JOIN CATEGORIA_ENTRADA ce ON e.id = ce.entrada_id
-                LEFT JOIN user uc ON e.tramitadoPor = uc.id
-                LEFT JOIN negociados n ON d.negociado_id = n.id"""
+        sql = """SELECT DISTINCT e.id, e.Asunto, e.Fecha, e.Area AS AreaName, e.Confidencial, e.Urgente, e.numeroEntrada, e.Tramitado, e.Observaciones, e.Tramitado_por_id, uc.user AS Tramitado_por_username, ec.canalEntrada_nombre AS CanalNombre, ec.canalEntrada_id AS CanalId FROM entrada e LEFT JOIN destinatario d ON e.id = d.entrada_id LEFT JOIN CATEGORIA_ENTRADA ce ON e.id = ce.entrada_id LEFT JOIN entrada_canales ec ON e.id = ec.entrada_id LEFT JOIN user uc ON e.Tramitado_por_id = uc.id"""
         params = []; where_clauses = []
         user_role_names = [role.nombre_role for role in user.roles if hasattr(role, 'nombre_role')]
         if not user_role_names: return []
-        where_clauses.append(f"n.nombre IN ({', '.join(['?'] * len(user_role_names))})")
-        params.extend(user_role_names)
+        where_clauses.append(f"d.role_name IN ({', '.join(['?'] * len(user_role_names))})"); params.extend(user_role_names)
         if date_str:
             try: day, month, year = date_str.split('/'); where_clauses.append("e.Fecha = ?"); params.append(f"{year}-{month}-{day}")
             except ValueError: print(f"Warning: Invalid date format '{date_str}'. Date filter ignored.")
@@ -289,32 +279,21 @@ def update_entrada_details(entrada_obj: models.Entrada, destinatario_areas_nombr
     conn = None
     try:
         conn = get_db_connection(); cursor = conn.cursor(); conn.execute("BEGIN TRANSACTION")
-        sql_update_entrada = "UPDATE entrada SET Asunto = ?, Fecha = ?, Area = ?, Confidencial = ?, Urgente = ?, numeroEntrada = ?, Tramitado = ?, Observaciones = ?, tramitadoPor = ? WHERE id = ?"
+        sql_update_entrada = "UPDATE entrada SET Asunto = ?, Fecha = ?, Area = ?, Confidencial = ?, Urgente = ?, numeroEntrada = ?, Tramitado = ?, Observaciones = ?, Tramitado_por_id = ? WHERE id = ?"
         primary_area_name = entrada_obj.area.nombre_role if entrada_obj.area else None
         fecha_str = entrada_obj.fecha.strftime("%Y-%m-%d") if isinstance(entrada_obj.fecha, datetime.date) else entrada_obj.fecha
         tramitado_por_id_to_set = updated_by_user.id if entrada_obj.tramitado else None # Simplified logic
         params_update_entrada = (entrada_obj.asunto, fecha_str, primary_area_name, entrada_obj.confidencial, entrada_obj.urgente, entrada_obj.numero_entrada, entrada_obj.tramitado, entrada_obj.observaciones, tramitado_por_id_to_set, entrada_obj.id)
         cursor.execute(sql_update_entrada, params_update_entrada)
         cursor.execute("DELETE FROM destinatario WHERE entrada_id = ?", (entrada_obj.id,))
-        # Actualizar destinatarios negociados
-        for negociado_nombre in destinatario_areas_nombres:
-            cursor.execute("SELECT id FROM negociados WHERE nombre = ?", (negociado_nombre,))
-            negociado_row = cursor.fetchone()
-            if negociado_row:
-                cursor.execute("INSERT INTO destinatario (entrada_id, negociado_id) VALUES (?, ?)",
-                             (entrada_obj.id, negociado_row['id']))
-        
-        # Actualizar destinatarios jefes
-        for jefe_nombre in destinatario_jefes_nombres:
-            jefe_nombre_clean = jefe_nombre.split('(')[0].strip()
-            cursor.execute("SELECT id FROM JEFES WHERE nombre = ?", (jefe_nombre_clean,))
-            jefe_row = cursor.fetchone()
-            if jefe_row:
-                cursor.execute("INSERT INTO destinatarioJefe (entrada_id, jefe_id) VALUES (?, ?)",
-                             (entrada_obj.id, jefe_row['id']))
+        for area_nombre in destinatario_areas_nombres: cursor.execute("INSERT INTO destinatario (entrada_id, role_name) VALUES (?, ?)", (entrada_obj.id, area_nombre))
+        for jefe_nombre_full in destinatario_jefes_nombres: cursor.execute("INSERT INTO destinatario (entrada_id, role_name) VALUES (?, ?)", (entrada_obj.id, jefe_nombre_full.split('(')[0].strip()))
         cursor.execute("DELETE FROM CATEGORIA_ENTRADA WHERE entrada_id = ?", (entrada_obj.id,))
         for cat_nombre in categoria_nombres: cursor.execute("INSERT INTO CATEGORIA_ENTRADA (entrada_id, CATEGORIA) VALUES (?, ?)", (entrada_obj.id, cat_nombre))
-        cursor.execute("UPDATE entrada SET canalEntrada = ? WHERE id = ?", (canal_entrada_nombre, entrada_obj.id))
+        cursor.execute("DELETE FROM entrada_canales WHERE entrada_id = ?", (entrada_obj.id,))
+        cursor.execute("SELECT id FROM canalesEntrada WHERE nombre = ?", (canal_entrada_nombre,)); canal_row = cursor.fetchone()
+        if canal_row: cursor.execute("INSERT INTO entrada_canales (entrada_id, canalEntrada_id, canalEntrada_nombre) VALUES (?, ?, ?)", (entrada_obj.id, canal_row["id"], canal_entrada_nombre))
+        else: print(f"Warning: Canal de entrada '{canal_entrada_nombre}' no encontrado. Se omitirá en la actualización.")
         conn.commit(); return True
     except (sqlite3.Error, ValueError) as e: print(f"Error in update_entrada_details: {e}"); conn.rollback(); return False
 
@@ -385,60 +364,15 @@ def add_comentario_jefe(entrada_id: int, comentario: models.Comentario) -> Optio
 def save_new_entrada(entrada_data: models.Entrada, current_user: models.Usuario, destinatario_areas_nombres: List[str], destinatario_jefes_nombres: List[str], categoria_nombres: List[str], canal_entrada_nombre: str) -> Optional[int]:
     conn = None; new_entrada_id = None
     try:
-        print("DEBUG: Iniciando save_new_entrada")
         conn = get_db_connection(); cursor = conn.cursor(); conn.execute("BEGIN TRANSACTION")
-        
-        # Insertar en tabla entrada (incluyendo canalEntrada directamente)
-        sql_entrada = """INSERT INTO entrada
-                        (Asunto, Fecha, Area, Confidencial, Urgente, numeroEntrada,
-                         Tramitado, Observaciones, tramitadoPor, canalEntrada)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        sql_entrada = "INSERT INTO entrada (Asunto, Fecha, Area, Confidencial, Urgente, numeroEntrada, Tramitado, Observaciones, Tramitado_por_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         primary_area_name = entrada_data.area.nombre_role if entrada_data.area else None
         fecha_str = entrada_data.fecha.strftime("%Y-%m-%d") if isinstance(entrada_data.fecha, datetime.date) else entrada_data.fecha
-        params_entrada = (entrada_data.asunto, fecha_str, primary_area_name,
-                         entrada_data.confidencial, entrada_data.urgente,
-                         entrada_data.numero_entrada, False, entrada_data.observaciones,
-                         current_user.id, canal_entrada_nombre)
-        
-        cursor.execute(sql_entrada, params_entrada)
-        new_entrada_id = cursor.lastrowid or cursor.execute("SELECT last_insert_rowid()").fetchone()[0]
-        if not new_entrada_id:
-            raise sqlite3.Error("Failed to get new_entrada_id")
-        
-        # Insertar en tablas relacionadas
-        # 1. Destinatarios (negociados)
-        for area_nombre in destinatario_areas_nombres:
-            cursor.execute("INSERT INTO destinatario (entrada_id, negociado_id) VALUES (?, (SELECT id FROM negociados WHERE nombre = ?))",
-                          (new_entrada_id, area_nombre))
-        
-        # 2. Destinatarios (jefes)
-        for jefe_nombre in destinatario_jefes_nombres:
-            cursor.execute("INSERT INTO destinatarioJefe (entrada_id, jefe_id) VALUES (?, (SELECT id FROM JEFES WHERE nombre = ?))",
-                          (new_entrada_id, jefe_nombre))
-        
-        # 3. Categorías
-        for categoria_nombre in categoria_nombres:
-            cursor.execute("INSERT INTO CATEGORIA_ENTRADA (ENTRADA_ID, CATEGORIA) VALUES (?, ?)",
-                          (new_entrada_id, categoria_nombre))
-        
-        conn.commit()
-        return new_entrada_id
-        # Insertar destinatarios negociados
-        for negociado_nombre in destinatario_areas_nombres:
-            cursor.execute("SELECT id FROM negociados WHERE nombre = ?", (negociado_nombre,))
-            negociado_row = cursor.fetchone()
-            if negociado_row:
-                cursor.execute("INSERT INTO destinatario (entrada_id, negociado_id) VALUES (?, ?)",
-                             (new_entrada_id, negociado_row['id']))
-        
-        # Insertar destinatarios jefes
-        for jefe_nombre in destinatario_jefes_nombres:
-            jefe_nombre_clean = jefe_nombre.split('(')[0].strip()
-            cursor.execute("SELECT id FROM JEFES WHERE nombre = ?", (jefe_nombre_clean,))
-            jefe_row = cursor.fetchone()
-            if jefe_row:
-                cursor.execute("INSERT INTO destinatarioJefe (entrada_id, jefe_id) VALUES (?, ?)",
-                             (new_entrada_id, jefe_row['id']))
+        params_entrada = (entrada_data.asunto, fecha_str, primary_area_name, entrada_data.confidencial, entrada_data.urgente, entrada_data.numero_entrada, False, entrada_data.observaciones, current_user.id)
+        cursor.execute(sql_entrada, params_entrada); new_entrada_id = cursor.lastrowid
+        if not new_entrada_id: raise sqlite3.Error("Failed to get new_entrada_id.")
+        for area_nombre in destinatario_areas_nombres: cursor.execute("INSERT INTO destinatario (entrada_id, role_name) VALUES (?, ?)", (new_entrada_id, area_nombre))
+        for jefe_nombre_full in destinatario_jefes_nombres: cursor.execute("INSERT INTO destinatario (entrada_id, role_name) VALUES (?, ?)", (new_entrada_id, jefe_nombre_full.split('(')[0].strip()))
         for cat_nombre in categoria_nombres: cursor.execute("INSERT INTO CATEGORIA_ENTRADA (entrada_id, CATEGORIA) VALUES (?, ?)", (new_entrada_id, cat_nombre))
         cursor.execute("SELECT id FROM canalesEntrada WHERE nombre = ?", (canal_entrada_nombre,)); canal_row = cursor.fetchone()
         if canal_row: cursor.execute("INSERT INTO entrada_canales (entrada_id, canalEntrada_id, canalEntrada_nombre) VALUES (?, ?, ?)", (new_entrada_id, canal_row["id"], canal_entrada_nombre))
@@ -483,10 +417,10 @@ def get_entrada_details_by_id(entrada_id: int) -> Optional[models.Entrada]:
     conn = None
     try:
         conn = get_db_connection(); cursor = conn.cursor()
-        sql_main = "SELECT e.id, e.Asunto, e.Fecha, e.Area AS AreaName, e.Confidencial, e.Urgente, e.numeroEntrada, e.Tramitado, e.Observaciones, e.tramitadoPor, u.user AS Tramitado_por_username, e.canalEntrada AS CanalNombre FROM entrada e LEFT JOIN user u ON e.tramitadoPor = u.id WHERE e.id = ?"
+        sql_main = "SELECT e.id, e.Asunto, e.Fecha, e.Area AS AreaName, e.Confidencial, e.Urgente, e.numeroEntrada, e.Tramitado, e.Observaciones, e.Tramitado_por_id, u.user AS Tramitado_por_username, ec.canalEntrada_id AS CanalId, ec.canalEntrada_nombre AS CanalNombre FROM entrada e LEFT JOIN entrada_canales ec ON e.id = ec.entrada_id LEFT JOIN user u ON e.Tramitado_por_id = u.id WHERE e.id = ?"
         cursor.execute(sql_main, (entrada_id,)); row = cursor.fetchone()
         if not row: return None
-        dest_sql = "SELECT negociado_id FROM destinatario WHERE entrada_id = ?"; cursor.execute(dest_sql, (entrada_id,)); destinatario_roles = [models.Role(nombre_role=str(r_row["negociado_id"])) for r_row in cursor.fetchall() if r_row["negociado_id"]]
+        dest_sql = "SELECT role_name FROM destinatario WHERE entrada_id = ?"; cursor.execute(dest_sql, (entrada_id,)); destinatario_roles = [models.Role(nombre_role=r_row["role_name"]) for r_row in cursor.fetchall() if r_row["role_name"]]
         cat_sql = "SELECT CATEGORIA FROM CATEGORIA_ENTRADA WHERE entrada_id = ?"; cursor.execute(cat_sql, (entrada_id,)); categorias_list = [models.Categoria(nombre=cat_row["CATEGORIA"]) for cat_row in cursor.fetchall() if cat_row["CATEGORIA"]]
         fecha_obj = None
         if row["Fecha"]: 
@@ -513,18 +447,16 @@ if __name__ == '__main__':
         with open("CONFIG.CFG", "w") as f: f.write(f"BASE_DIR = {os.getcwd()}\nLOCAL_DIR = {os.getcwd()}\n")
     try:
         conn = get_db_connection(); print(f"DB Connection: {conn}"); cursor = conn.cursor()
-        # DDL statements (user, role, usuario_role, canalesEntrada, CATEGORIA, negociados, JEFES, entrada, destinatario, destinatarioJefe, CATEGORIA_ENTRADA, files, antecedentesFiles, salidaFiles, vistoBuenoJefes, comentario)
+        # DDL statements (user, role, usuario_role, canalesEntrada, CATEGORIA, entrada, destinatario, CATEGORIA_ENTRADA, entrada_canales, files, antecedentesFiles, salidaFiles, vistoBuenoJefes, comentario)
         cursor.execute("CREATE TABLE IF NOT EXISTS user (id INTEGER PRIMARY KEY, user TEXT UNIQUE, password TEXT, reset INTEGER DEFAULT 0, isJefe INTEGER DEFAULT 0, posicionJefe INTEGER)")
         cursor.execute("CREATE TABLE IF NOT EXISTS role (id INTEGER PRIMARY KEY, nombre_role TEXT UNIQUE, posicion TEXT, isJefe INTEGER DEFAULT 0)")
         cursor.execute("CREATE TABLE IF NOT EXISTS usuario_role (user_id INTEGER, role_id INTEGER, FOREIGN KEY(user_id) REFERENCES user(id), FOREIGN KEY(role_id) REFERENCES role(id), PRIMARY KEY(user_id, role_id))")
         cursor.execute("CREATE TABLE IF NOT EXISTS canalesEntrada (id INTEGER PRIMARY KEY, nombre TEXT UNIQUE)")
         cursor.execute("CREATE TABLE IF NOT EXISTS CATEGORIA (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE)")
-        cursor.execute("CREATE TABLE IF NOT EXISTS negociados (id INTEGER PRIMARY KEY, nombre TEXT UNIQUE)")
-        cursor.execute("CREATE TABLE IF NOT EXISTS JEFES (id INTEGER PRIMARY KEY, nombre TEXT UNIQUE, user_id INTEGER, FOREIGN KEY(user_id) REFERENCES user(id))")
-        cursor.execute("CREATE TABLE IF NOT EXISTS entrada (id INTEGER PRIMARY KEY AUTOINCREMENT, Asunto TEXT, Fecha TEXT, Area TEXT, Confidencial INTEGER DEFAULT 0, Urgente INTEGER DEFAULT 0, numeroEntrada TEXT UNIQUE, Tramitado INTEGER DEFAULT 0, Observaciones TEXT, tramitadoPor INTEGER, FOREIGN KEY(tramitadoPor) REFERENCES user(id))")
-        cursor.execute("CREATE TABLE IF NOT EXISTS destinatario (id INTEGER PRIMARY KEY AUTOINCREMENT, entrada_id INTEGER, negociado_id INTEGER, FOREIGN KEY(entrada_id) REFERENCES entrada(id), FOREIGN KEY(negociado_id) REFERENCES negociados(id))")
-        cursor.execute("CREATE TABLE IF NOT EXISTS destinatarioJefe (id INTEGER PRIMARY KEY AUTOINCREMENT, entrada_id INTEGER, jefe_id INTEGER, FOREIGN KEY(entrada_id) REFERENCES entrada(id), FOREIGN KEY(jefe_id) REFERENCES JEFES(id))")
+        cursor.execute("CREATE TABLE IF NOT EXISTS entrada (id INTEGER PRIMARY KEY AUTOINCREMENT, Asunto TEXT, Fecha TEXT, Area TEXT, Confidencial INTEGER DEFAULT 0, Urgente INTEGER DEFAULT 0, numeroEntrada TEXT UNIQUE, Tramitado INTEGER DEFAULT 0, Observaciones TEXT, Tramitado_por_id INTEGER, FOREIGN KEY(Tramitado_por_id) REFERENCES user(id))")
+        cursor.execute("CREATE TABLE IF NOT EXISTS destinatario (id INTEGER PRIMARY KEY AUTOINCREMENT, entrada_id INTEGER, role_id INTEGER, role_name TEXT, FOREIGN KEY(entrada_id) REFERENCES entrada(id), FOREIGN KEY(role_id) REFERENCES role(id))")
         cursor.execute("CREATE TABLE IF NOT EXISTS CATEGORIA_ENTRADA (entrada_id INTEGER, CATEGORIA TEXT, FOREIGN KEY(entrada_id) REFERENCES entrada(id), PRIMARY KEY(entrada_id, CATEGORIA))")
+        cursor.execute("CREATE TABLE IF NOT EXISTS entrada_canales (entrada_id INTEGER, canalEntrada_id INTEGER, canalEntrada_nombre TEXT, FOREIGN KEY(entrada_id) REFERENCES entrada(id), FOREIGN KEY(canalEntrada_id) REFERENCES canalesEntrada(id), PRIMARY KEY(entrada_id, canalEntrada_id))")
         cursor.execute("CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT, ruta_archivo TEXT NOT NULL, entrada_id INTEGER NOT NULL, fecha TEXT, asunto TEXT, origen TEXT, observaciones TEXT, FOREIGN KEY(entrada_id) REFERENCES entrada(id))")
         cursor.execute("CREATE TABLE IF NOT EXISTS antecedentesFiles (id INTEGER PRIMARY KEY AUTOINCREMENT, ruta_archivo TEXT NOT NULL, entrada_id INTEGER NOT NULL, fecha TEXT, asunto TEXT, destino TEXT, observaciones TEXT, tipo TEXT, FOREIGN KEY(entrada_id) REFERENCES entrada(id))")
         cursor.execute("CREATE TABLE IF NOT EXISTS salidaFiles (id INTEGER PRIMARY KEY AUTOINCREMENT, ruta_archivo TEXT NOT NULL, entrada_id INTEGER NOT NULL, fecha TEXT, asunto TEXT, destino TEXT, visto_bueno_general INTEGER DEFAULT 0, FOREIGN KEY(entrada_id) REFERENCES entrada(id))")
@@ -536,25 +468,22 @@ if __name__ == '__main__':
         try:
             cursor.execute("INSERT OR IGNORE INTO user (id, user, password, reset) VALUES (1, 'testuser', 'hashed_testpassword', 0)")
             cursor.execute("INSERT OR IGNORE INTO user (id, user, password, reset, isJefe, posicionJefe) VALUES (3, 'jefeuser', 'hashed_jefepassword', 0, 1, 100)")
-            cursor.execute("INSERT OR IGNORE INTO user (id, user, password, reset, isJefe, posicionJefe) VALUES (62, 'coroneluser', 'hashed_password', 0, 1, 200)")
             cursor.execute("INSERT OR IGNORE INTO role (id, nombre_role, posicion, isJefe) VALUES (1, 'Admin', NULL, 0), (2, 'Manager', '1', 1), (3, 'Worker', '2', 0), (4, 'DepartmentA', NULL, 0), (5, 'WorkerArea', NULL, 0)")
-            cursor.execute("INSERT OR IGNORE INTO negociados (id, nombre) VALUES (4, 'DepartmentA'), (5, 'WorkerArea'), (6, 'Registro')")
-            cursor.execute("INSERT OR IGNORE INTO JEFES (id, nombre, user_id) VALUES (1, 'Manager Jefe', 3), (2, 'CORONEL', 62)")
             cursor.execute("INSERT OR IGNORE INTO usuario_role (user_id, role_id) VALUES (1, 3), (3, 2)")
             cursor.execute("INSERT OR IGNORE INTO canalesEntrada (id, nombre) VALUES (1, 'Email'), (2, 'Web Form')")
             cursor.execute("INSERT OR IGNORE INTO CATEGORIA (nombre) VALUES ('General'), ('Urgent'), ('Projects'), ('Tasks'), ('TestCategory')")
             cursor.execute("INSERT OR IGNORE INTO entrada (id, Asunto, Fecha, Area, Confidencial, Urgente, numeroEntrada, Tramitado, Tramitado_por_id) VALUES (1, 'Urgent Project Alpha', '2023-10-26', 'DepartmentA', 1, 1, 'E2023-001', 0, NULL)")
-            cursor.execute("INSERT OR IGNORE INTO destinatario (entrada_id, negociado_id) VALUES (1, 4)")  # 4 = DepartmentA
+            cursor.execute("INSERT OR IGNORE INTO destinatario (entrada_id, role_name) VALUES (1, 'DepartmentA')")
             cursor.execute("INSERT OR IGNORE INTO CATEGORIA_ENTRADA (entrada_id, CATEGORIA) VALUES (1, 'Urgent'), (1, 'Projects')")
-            cursor.execute("UPDATE entrada SET canalEntrada = 'Email' WHERE id = 1")
+            cursor.execute("INSERT OR IGNORE INTO entrada_canales (entrada_id, canalEntrada_id, canalEntrada_nombre) VALUES (1, 1, 'Email')")
             cursor.execute("INSERT OR IGNORE INTO files (id, ruta_archivo, entrada_id, fecha, asunto, origen, observaciones) VALUES (1, '/files/e1_doc1.pdf', 1, '2023-10-26', 'Documento Principal E1', 'ClienteX', 'Obs doc1 e1')")
             cursor.execute("INSERT OR IGNORE INTO antecedentesFiles (id, ruta_archivo, entrada_id, fecha, asunto, destino, observaciones, tipo) VALUES (1, '/antecedentes/e1_ant1.docx', 1, '2023-10-25', 'Antecedente Clave E1', 'Interno', 'Obs ant1 e1', 'Informe')")
             cursor.execute("INSERT OR IGNORE INTO salidaFiles (id, ruta_archivo, entrada_id, fecha, asunto, destino, visto_bueno_general) VALUES (1, '/salidas/e1_sal1.pdf', 1, '2023-10-28', 'Respuesta ClienteX E1', 'ClienteX', 0)")
             cursor.execute("INSERT OR IGNORE INTO vistoBuenoJefes (salida_file_id, user_id, visto_bueno_status) VALUES (1, 3, 1)")
             cursor.execute("INSERT OR IGNORE INTO entrada (id, Asunto, Fecha, Area, Confidencial, Urgente, numeroEntrada, Tramitado, Tramitado_por_id) VALUES (2, 'General Inquiry Beta', '2023-10-27', 'WorkerArea', 0, 0, 'E2023-002', 1, 1)")
-            cursor.execute("INSERT OR IGNORE INTO destinatario (entrada_id, negociado_id) VALUES (2, 5)")  # 5 = WorkerArea
+            cursor.execute("INSERT OR IGNORE INTO destinatario (entrada_id, role_name) VALUES (2, 'Worker')")
             cursor.execute("INSERT OR IGNORE INTO CATEGORIA_ENTRADA (entrada_id, CATEGORIA) VALUES (2, 'General')")
-            cursor.execute("UPDATE entrada SET canalEntrada = 'Web Form' WHERE id = 2")
+            cursor.execute("INSERT OR IGNORE INTO entrada_canales (entrada_id, canalEntrada_id, canalEntrada_nombre) VALUES (2, 2, 'Web Form')")
             cursor.execute("INSERT OR IGNORE INTO files (id, ruta_archivo, entrada_id, fecha, asunto, origen, observaciones) VALUES (2, '/files/e2_info.txt', 2, '2023-10-27', 'Info Adicional E2', 'Sistema', 'Obs info e2')")
             conn.commit()
         except sqlite3.Error as e: print(f"Error populating test data: {e}")

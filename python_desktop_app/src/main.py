@@ -37,9 +37,11 @@ except ImportError as e:
 
 
 def main():
-    # 1. Create the main Tkinter root window and hide it
+    # 1. Create the main Tkinter root window
+    print("Initializing main Tkinter root...")
     root = tk.Tk()
-    root.withdraw()
+    root.title("Sistema de Registro")
+    print("Root window created, proceeding with config...")
 
     # 2. Load configuration
     loaded_config = None
@@ -92,17 +94,31 @@ def main():
         root.destroy()
         sys.exit(1)
 
-    # 3. Show login dialog
-    user_object = login_ui.show_login_dialog(root)
+    # 3. Show login dialog - ensure root stays alive
+    try:
+        user_object = login_ui.show_login_dialog(root)
+    except Exception as e:
+        messagebox.showerror("Login Error", f"Error during login: {e}")
+        root.destroy()
+        sys.exit(1)
 
     # 4. Process login result
     if user_object:
         # Login successful
+        # Verify root window still exists
+        try:
+            root.winfo_exists()  # Check if root is still valid
+        except tk.TclError:
+            # Recreate root if it was destroyed
+            root = tk.Tk()
+            root.title("Sistema de Registro")
+        
         # Create and run the main application window
-        # The MainApplicationWindow will use 'root' as its main window and call deiconify()
         try:
             main_app = main_app_ui.MainApplicationWindow(root, user_object, loaded_config)
-            root.mainloop() # Start the main event loop for the now-visible main window
+            root.mainloop() # Start the main event loop
+        except Exception as e:
+            messagebox.showerror("Application Error", f"Error starting main application: {e}")
         except Exception as e:
             messagebox.showerror("Application Error", f"An error occurred while starting the main application: {e}")
             # Fall through to cleanup

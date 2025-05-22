@@ -2,11 +2,12 @@ import datetime
 from typing import List, Optional
 
 class Usuario:
-    def __init__(self, id: int, username: str, password_hash: str, roles: List['Role']):
+    def __init__(self, id: int, username: str, password_hash: str, roles: List['Role'], permiso: bool = True):
         self.id = id
         self.username = username
         self.password_hash = password_hash
         self.roles = roles
+        self.permiso = permiso
 
     # Placeholder for password checking/setting methods
     def set_password(self, password: str):
