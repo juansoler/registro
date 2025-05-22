@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="comentario" language="groovy" pageWidth="595" pageHeight="842" columnWidth="555" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20" uuid="5586a4d3-28a5-4e6f-bca1-5400e5ac94aa">
+	<property name="ireport.zoom" value="1.0"/>
+	<property name="ireport.x" value="0"/>
+	<property name="ireport.y" value="0"/>
+	<parameter name="entradaId" class="java.lang.Integer">
+		<defaultValueExpression><![CDATA[33]]></defaultValueExpression>
+	</parameter>
+	<queryString>
+		<![CDATA[select files.file, entrada.asunto, entrada.fecha, entrada.area, entrada.observaciones, entrada.urgente, entrada.confidencial
+, entrada.jefe1 as jefe1visto, entrada.jefe2 as jefe2visto, entrada.jefe3 as jefe3visto, entrada.jefe3 as jefe3visto, entrada.jefe4 as jefe4visto, entrada.jefe5 as jefe5visto, comentario.jefe1, comentario.jefe2, comentario.jefe3, comentario.jefe4, comentario.jefe5 from entrada INNER JOIN comentario, files ON entrada.id = comentario.entrada_id AND entrada.id = files.entrada_id where entrada.id = $P{entradaId}]]>
+	</queryString>
+	<field name="file" class="java.lang.Object"/>
+	<field name="asunto" class="java.lang.Object"/>
+	<field name="fecha" class="java.lang.Object"/>
+	<field name="Area" class="java.lang.Object"/>
+	<field name="observaciones" class="java.lang.Object"/>
+	<field name="urgente" class="java.lang.Object"/>
+	<field name="confidencial" class="java.lang.Object"/>
+	<field name="jefe1visto" class="java.lang.Object"/>
+	<field name="jefe2visto" class="java.lang.Object"/>
+	<field name="jefe3visto" class="java.lang.Object"/>
+	<field name="jefe4visto" class="java.lang.Object"/>
+	<field name="jefe5visto" class="java.lang.Object"/>
+	<field name="jefe1" class="java.lang.Object"/>
+	<field name="jefe2" class="java.lang.Object"/>
+	<field name="jefe3" class="java.lang.Object"/>
+	<field name="jefe4" class="java.lang.Object"/>
+	<field name="jefe5" class="java.lang.Object"/>
+	<background>
+		<band splitType="Stretch"/>
+	</background>
+	<title>
+		<band height="76" splitType="Stretch">
+			<staticText>
+				<reportElement x="4" y="23" width="44" height="20" uuid="57a855de-99be-4ea7-9c78-c214a7b455dc"/>
+				<text><![CDATA[Asunto:]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="48" y="23" width="507" height="20" uuid="09081a7f-6c30-465f-840d-9ee05e46524c"/>
+				<textFieldExpression><![CDATA[$F{asunto}]]></textFieldExpression>
+			</textField>
+			<staticText>
+				<reportElement x="5" y="56" width="43" height="20" uuid="ae86c059-b42a-4daa-9ad7-fd586c601b0d"/>
+				<text><![CDATA[Fecha: ]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="48" y="56" width="100" height="20" uuid="211ecc0d-46b4-4b56-a394-d50a3dc6d6a9"/>
+				<textFieldExpression><![CDATA[$F{fecha}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="181" y="56" width="100" height="20" uuid="ed2eadbf-027a-460e-8e22-5ffd92b19754"/>
+				<textFieldExpression><![CDATA[""+$F{Area}]]></textFieldExpression>
+			</textField>
+			<staticText>
+				<reportElement x="148" y="56" width="33" height="20" uuid="be445e2f-8147-46fd-9871-395cca3e2e7e"/>
+				<text><![CDATA[Area:]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="281" y="55" width="110" height="21" uuid="14fbb9bd-f8ef-4c4d-bc88-42894d2b4a0e"/>
+				<textFieldExpression><![CDATA["Urgente: " +($F{urgente}.intValue() == 0 ? "NO" : "SI")]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="391" y="55" width="110" height="21" uuid="bb3d63ca-4788-42b5-881a-9fd171107e02"/>
+				<textFieldExpression><![CDATA["Confidencial: " +($F{confidencial}.intValue() == 0 ? "NO" : "SI")]]></textFieldExpression>
+			</textField>
+		</band>
+	</title>
+	<pageHeader>
+		<band height="35" splitType="Stretch">
+			<textField>
+				<reportElement x="5" y="0" width="550" height="35" uuid="d0ca2cfc-3c09-4fc6-98ab-d8b9e79e4866"/>
+				<textFieldExpression><![CDATA["Observaciones: "+$F{observaciones}]]></textFieldExpression>
+			</textField>
+		</band>
+	</pageHeader>
+	<columnHeader>
+		<band height="51" splitType="Stretch">
+			<textField>
+				<reportElement x="5" y="0" width="550" height="20" uuid="e4fab048-b409-4da7-a1eb-2633fec62ccb"/>
+				<hyperlinkReferenceExpression><![CDATA[""+$F{file}]]></hyperlinkReferenceExpression>
+			</textField>
+		</band>
+	</columnHeader>
+	<detail>
+		<band height="50" splitType="Stretch">
+			<textField>
+				<reportElement x="100" y="0" width="455" height="50" uuid="f717ed37-7f7d-4e65-81ba-2ec54d6b7065"/>
+				<textFieldExpression><![CDATA[$F{jefe1}]]></textFieldExpression>
+			</textField>
+			<staticText>
+				<reportElement x="0" y="0" width="100" height="16" uuid="3a3caea6-bdc2-4d9f-9b8a-32e53ee29474"/>
+				<text><![CDATA[Coronel: ]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="0" y="16" width="96" height="34" uuid="3b6aae0e-ba94-45ae-a3ca-4067a6956261"/>
+				<textFieldExpression><![CDATA["Visto: " +($F{jefe1visto}.intValue() == 0 ? "NO" : "SI")]]></textFieldExpression>
+			</textField>
+		</band>
+		<band height="50">
+			<staticText>
+				<reportElement x="0" y="0" width="100" height="20" uuid="d67a107b-ee34-496b-883a-19bcc0ba2d5a"/>
+				<text><![CDATA[Jefe Operaciones:]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="0" y="16" width="96" height="34" uuid="4e3b29fc-c6ea-403f-ad55-95574e83d53e"/>
+				<textFieldExpression><![CDATA["Visto: " +($F{jefe2visto}.intValue() == 0 ? "NO" : "SI")]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="104" y="0" width="455" height="50" uuid="15c676f9-658e-456a-a0b9-e32dfb31606c"/>
+				<textFieldExpression><![CDATA[$F{jefe2}]]></textFieldExpression>
+			</textField>
+		</band>
+		<band height="50">
+			<staticText>
+				<reportElement x="0" y="0" width="100" height="20" uuid="b0c83f27-5182-480d-8460-ed15ca9430b3"/>
+				<text><![CDATA[Jefe de Personal]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="104" y="0" width="451" height="50" uuid="48968018-912b-413c-8216-be00bd075454"/>
+				<textFieldExpression><![CDATA[$F{jefe3}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="4" y="16" width="96" height="34" uuid="6369cf65-d159-4098-ae66-ebe184d3818a"/>
+				<textFieldExpression><![CDATA["Visto: " +($F{jefe3visto}.intValue() == 0 ? "NO" : "SI")]]></textFieldExpression>
+			</textField>
+		</band>
+		<band height="50">
+			<staticText>
+				<reportElement x="4" y="0" width="100" height="20" uuid="bfa62c30-f67d-40f3-ac2c-ebb9290a7b2b"/>
+				<text><![CDATA[Jefe de PJ e Info:]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="100" y="0" width="455" height="50" uuid="07578114-9876-4bed-ab15-371bec1c9114"/>
+				<textFieldExpression><![CDATA[$F{jefe4}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="0" y="16" width="96" height="34" uuid="22d52c1b-9545-4718-b370-a1dab178dd89"/>
+				<textFieldExpression><![CDATA["Visto: " +($F{jefe4visto}.intValue() == 0 ? "NO" : "SI")]]></textFieldExpression>
+			</textField>
+		</band>
+		<band height="50">
+			<staticText>
+				<reportElement x="4" y="0" width="142" height="20" uuid="edb68235-0f70-4218-a3bc-d5f330b36420"/>
+				<text><![CDATA[Jefe de Apoyo e Innovacion:]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="146" y="0" width="409" height="50" uuid="0a662837-224a-42d9-9135-12a21985684e"/>
+				<textFieldExpression><![CDATA[$F{jefe5}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="0" y="16" width="96" height="34" uuid="918f797f-352e-4ce1-967f-59e125511333"/>
+				<textFieldExpression><![CDATA["Visto: " +($F{jefe5visto}.intValue() == 0 ? "NO" : "SI")]]></textFieldExpression>
+			</textField>
+		</band>
+	</detail>
+	<columnFooter>
+		<band height="45" splitType="Stretch"/>
+	</columnFooter>
+	<pageFooter>
+		<band height="54" splitType="Stretch"/>
+	</pageFooter>
+	<summary>
+		<band height="42" splitType="Stretch"/>
+	</summary>
+</jasperReport>
