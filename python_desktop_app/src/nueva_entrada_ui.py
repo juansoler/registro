@@ -204,7 +204,8 @@ class NuevaEntradaWindow(tk.Toplevel):
         btn_frame.pack(fill=tk.X, pady=5)
         ttk.Button(btn_frame, text="Añadir Archivo", command=lambda tl=file_list_ref, tr=tree, ta=tipo_archivo: self._add_file(tl, tr, ta)).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Quitar Seleccionado", command=lambda tl=file_list_ref, tr=tree: self._remove_file(tl, tr)).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Editar Metadatos", command=lambda tr=tree, ta=tipo_archivo: self._edit_file_metadata(tr, ta)).pack(side=tk.LEFT, padx=5)
+        # Pass file_list_ref to _edit_file_metadata
+        ttk.Button(btn_frame, text="Editar Metadatos", command=lambda fl=file_list_ref, tr=tree, ta=tipo_archivo: self._edit_file_metadata(fl, tr, ta)).pack(side=tk.LEFT, padx=5)
         
         setattr(self, f"{tipo_archivo}_tree", tree) # e.g., self.entrada_tree
         return tab_frame
@@ -343,39 +344,53 @@ class NuevaEntradaWindow(tk.Toplevel):
         tree_widget.delete(selected_item_iid[0])
 
 
-    def _edit_file_metadata(self, tree_widget, tipo_archivo):
-        # Placeholder for metadata editing dialog
+    def _edit_file_metadata(self, file_list_ref, tree_widget, tipo_archivo):
         selected_item_iid = tree_widget.selection()
         if not selected_item_iid:
             messagebox.showwarning("Nada Seleccionado", "Seleccione un archivo para editar sus metadatos.", parent=self)
             return
-        messagebox.showinfo("No Implementado", "La edición de metadatos de archivo se implementará.", parent=self)
+
+        item_details = tree_widget.item(selected_item_iid[0])
+        try:
+            # Assuming 'text' field of tree item stores the index in the respective file_list_ref
+            file_index = int(item_details['text']) 
+            if not (0 <= file_index < len(file_list_ref)):
+                raise ValueError("Index out of bounds for file_list_ref")
+        except (ValueError, KeyError):
+            messagebox.showerror("Error", "No se pudo encontrar la referencia del archivo para editar.", parent=self)
+            return
+
+        file_data_to_edit = file_list_ref[file_index]
+
+        # Create a new dialog for editing
+        dialog = FileMetadataDialog(self, file_data_to_edit, tipo_archivo)
+        self.wait_window(dialog) # Wait for dialog to close
+
+        if dialog.updated_data: # If data was updated in dialog
+            file_list_ref[file_index] = dialog.updated_data
+            # Update tree view
+            filename_display = dialog.updated_data.get("nombre_display", os.path.basename(dialog.updated_data["ruta_archivo"]))
+            
+            # Ensure date is formatted as string for tree view if it's a date object
+            display_fecha = dialog.updated_data["fecha"]
+            if isinstance(display_fecha, datetime.date):
+                display_fecha = display_fecha.strftime("%d/%m/%Y")
+
+            if tipo_archivo == "entrada":
+                tree_values = (filename_display, display_fecha, dialog.updated_data["asunto"], dialog.updated_data["origen_destino"], dialog.updated_data["observaciones"])
+            elif tipo_archivo == "antecedente":
+                tree_values = (filename_display, dialog.updated_data["tipo"], display_fecha, dialog.updated_data["asunto"], dialog.updated_data["origen_destino"], dialog.updated_data["observaciones"])
+            elif tipo_archivo == "salida": 
+                tree_values = (filename_display, display_fecha, dialog.updated_data["asunto"], dialog.updated_data["origen_destino"])
+            else: # Fallback
+                tree_values = (filename_display,)
+            
+            tree_widget.item(selected_item_iid[0], values=tree_values)
 
 
     # --- Action Button Callbacks ---
     def _on_save(self):
-        # Placeholder: Collect data and print or show "Not Implemented"
-        data = {
-            "asunto": self.asunto_entry.get(),
-            "fecha": self.fecha_entry.get_date().strftime("%Y-%m-%d"),
-            "numero_entrada": self.numero_entrada_entry.get(),
-            "canal_entrada": self.canal_entrada_combobox.get(),
-            "confidencial": self.confidencial_var.get(),
-            "urgente": self.urgente_var.get(),
-            "observaciones": self.observaciones_text.get("1.0", tk.END).strip(),
-            "dest_negociados": self.selected_negociados,
-            "dest_jefes": self.selected_jefes,
-            "categorias": self.selected_categorias,
-            "archivos_entrada": self.entrada_files,
-            "archivos_antecedentes": self.antecedentes_files,
-            "archivos_salida": self.salida_files,
-            "creado_por_usuario_id": self.user_object.id if self.user_object else None
-        }
-        print("Datos a Guardar (Nueva Entrada):", data)
-        messagebox.showinfo("Guardar", "Funcionalidad de guardar no implementada completamente.\nDatos impresos en consola.", parent=self)
-        # self.destroy() # Optionally close after save attempt
-
-        # --- Start of new save logic from previous subtask, now with encryption ---
+        # Validation
         if not self.asunto_entry.get().strip():
             messagebox.showerror("Error de Validación", "El campo 'Asunto' es obligatorio.", parent=self)
             return
@@ -425,10 +440,16 @@ class NuevaEntradaWindow(tk.Toplevel):
                 if not _crypto_utils_available: messagebox.showerror("Error Cripto", "Módulo crypto no disponible.", parent=self); return
                 crypto_utils.encrypt(crypto_utils.FIXED_KEY_STRING, source_path, target_path) # Encrypt
                 
+                # Convert date string from file_meta to date object for the model
+                fecha_obj = file_meta["fecha"]
+                if isinstance(fecha_obj, str):
+                    fecha_obj = datetime.datetime.strptime(fecha_obj, "%d/%m/%Y").date()
+
                 entrada_obj.archivos.append(models.Archivo(
                     id=None, ruta_archivo=target_path, entrada_id=0, 
-                    fecha=datetime.datetime.strptime(file_meta["fecha"], "%d/%m/%Y").date(), 
-                    asunto=file_meta["asunto"], origen_destino=file_meta["origen_destino"],
+                    fecha_creacion=fecha_obj, # Model uses fecha_creacion
+                    asunto_archivo=file_meta["asunto"], # Model uses asunto_archivo
+                    origen_archivo=file_meta["origen_destino"], # Model uses origen_archivo
                     observaciones=file_meta["observaciones"]
                 ))
 
@@ -439,12 +460,19 @@ class NuevaEntradaWindow(tk.Toplevel):
                 source_path = file_meta["ruta_archivo"]
                 target_path = os.path.join(target_antec_dir, os.path.basename(source_path))
                 if not _crypto_utils_available: messagebox.showerror("Error Cripto", "Módulo crypto no disponible.", parent=self); return
+                
+                fecha_obj = file_meta["fecha"]
+                if isinstance(fecha_obj, str):
+                    fecha_obj = datetime.datetime.strptime(fecha_obj, "%d/%m/%Y").date()
+                
                 crypto_utils.encrypt(crypto_utils.FIXED_KEY_STRING, source_path, target_path) # Encrypt
-                entrada_obj.antecedentes.append(models.Archivo(
+                entrada_obj.antecedentes.append(models.Archivo( # Assuming Archivo model is used for antecedents too
                     id=None, ruta_archivo=target_path, entrada_id=0,
-                    fecha=datetime.datetime.strptime(file_meta["fecha"], "%d/%m/%Y").date(),
-                    asunto=file_meta["asunto"], origen_destino=file_meta["origen_destino"],
-                    observaciones=file_meta["observaciones"], tipo=file_meta["tipo"]
+                    fecha_creacion=fecha_obj, # Model uses fecha_creacion
+                    asunto_archivo=file_meta["asunto"], # Model uses asunto_archivo
+                    origen_archivo=file_meta["origen_destino"], # Model uses origen_archivo
+                    observaciones=file_meta["observaciones"], 
+                    tipo_antecedente=file_meta["tipo"] # Model uses tipo_antecedente
                 ))
 
             # Process Archivos de Salida
@@ -454,12 +482,19 @@ class NuevaEntradaWindow(tk.Toplevel):
                 source_path = file_meta["ruta_archivo"]
                 target_path = os.path.join(target_salida_dir, os.path.basename(source_path))
                 if not _crypto_utils_available: messagebox.showerror("Error Cripto", "Módulo crypto no disponible.", parent=self); return
+
+                fecha_obj = file_meta["fecha"]
+                if isinstance(fecha_obj, str):
+                    fecha_obj = datetime.datetime.strptime(fecha_obj, "%d/%m/%Y").date()
+
                 crypto_utils.encrypt(crypto_utils.FIXED_KEY_STRING, source_path, target_path) # Encrypt
                 entrada_obj.salidas.append(models.ArchivoSalida(
                     id=None, ruta_archivo=target_path, entrada_id=0,
-                    fecha=datetime.datetime.strptime(file_meta["fecha"], "%d/%m/%Y").date(),
-                    asunto=file_meta["asunto"], destino=file_meta["origen_destino"], # Using origen_destino for now
-                    visto_bueno_general=False, visto_bueno_jefes=[]
+                    fecha_creacion=fecha_obj, # Model uses fecha_creacion
+                    asunto_archivo=file_meta["asunto"], # Model uses asunto_archivo
+                    destino_archivo=file_meta["origen_destino"], # Model uses destino_archivo
+                    visto_bueno_general=False, # Default for new salida
+                    visto_bueno_jefes=[]
                 ))
         
         except crypto_utils.CryptoException as ce: # Catch crypto specific errors
@@ -500,57 +535,169 @@ class NuevaEntradaWindow(tk.Toplevel):
         if messagebox.askokcancel("Cancelar", "¿Descartar nueva entrada y cerrar esta ventana?", parent=self):
             self.destroy()
 
+class FileMetadataDialog(tk.Toplevel):
+    def __init__(self, parent, file_data, tipo_archivo):
+        super().__init__(parent)
+        self.file_data_original = file_data # Keep original in case of cancel
+        self.updated_data = None # This will store the new data if saved
+        self.tipo_archivo = tipo_archivo
+
+        self.title(f"Editar Metadatos - {file_data.get('nombre_display', 'Archivo')}")
+        self.geometry("450x370") # Adjusted size for better layout
+        self.transient(parent)
+        self.grab_set()
+
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(expand=True, fill=tk.BOTH)
+        main_frame.columnconfigure(1, weight=1)
+
+        # Common fields
+        ttk.Label(main_frame, text="Nombre Archivo:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.nombre_display_entry = ttk.Entry(main_frame, width=40)
+        self.nombre_display_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.nombre_display_entry.insert(0, file_data.get("nombre_display", os.path.basename(file_data.get("ruta_archivo", ""))))
+
+        ttk.Label(main_frame, text="Fecha (dd/mm/yyyy):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.fecha_entry = DateEntry(main_frame, width=12, date_pattern='dd/MM/yyyy')
+        try:
+            current_fecha = file_data.get("fecha") # This can be str or date object
+            if isinstance(current_fecha, str):
+                self.fecha_entry.set_date(datetime.datetime.strptime(current_fecha, "%d/%m/%Y").date())
+            elif isinstance(current_fecha, datetime.date): # If already a date object
+                 self.fecha_entry.set_date(current_fecha)
+            else: # Fallback if type is unexpected or None
+                self.fecha_entry.set_date(datetime.date.today())
+        except ValueError: # If string parsing fails
+            self.fecha_entry.set_date(datetime.date.today())
+        self.fecha_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        
+        ttk.Label(main_frame, text="Asunto:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        self.asunto_entry = ttk.Entry(main_frame, width=40)
+        self.asunto_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        self.asunto_entry.insert(0, file_data.get("asunto", ""))
+
+        # Origen/Destino label changes based on type
+        origen_destino_label_text = "Origen/Destino:"
+        if tipo_archivo == "entrada": origen_destino_label_text = "Origen:"
+        elif tipo_archivo == "salida": origen_destino_label_text = "Destino:"
+        elif tipo_archivo == "antecedente": origen_destino_label_text = "Origen/Destino:"
+
+        ttk.Label(main_frame, text=origen_destino_label_text).grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        self.origen_destino_entry = ttk.Entry(main_frame, width=40)
+        self.origen_destino_entry.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+        self.origen_destino_entry.insert(0, file_data.get("origen_destino", ""))
+
+        current_row = 4
+        # Tipo (specific to 'antecedente')
+        if tipo_archivo == "antecedente":
+            ttk.Label(main_frame, text="Tipo Antecedente:").grid(row=current_row, column=0, padx=5, pady=5, sticky="w")
+            self.tipo_antecedente_entry = ttk.Entry(main_frame, width=40)
+            self.tipo_antecedente_entry.grid(row=current_row, column=1, padx=5, pady=5, sticky="ew")
+            self.tipo_antecedente_entry.insert(0, file_data.get("tipo", ""))
+            current_row += 1
+        else:
+            self.tipo_antecedente_entry = None
+
+
+        ttk.Label(main_frame, text="Observaciones:").grid(row=current_row, column=0, padx=5, pady=5, sticky="nw")
+        self.observaciones_text = tk.Text(main_frame, height=4, width=30) # Increased height slightly
+        self.observaciones_text.grid(row=current_row, column=1, padx=5, pady=5, sticky="ew")
+        self.observaciones_text.insert("1.0", file_data.get("observaciones", ""))
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=current_row + 1, column=0, columnspan=2, pady=10)
+        
+        ttk.Button(button_frame, text="Guardar Cambios", command=self._save_metadata).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _save_metadata(self):
+        self.updated_data = self.file_data_original.copy() # Start with original
+        self.updated_data["nombre_display"] = self.nombre_display_entry.get()
+        self.updated_data["fecha"] = self.fecha_entry.get_date() # Store as date object for consistency
+        self.updated_data["asunto"] = self.asunto_entry.get()
+        self.updated_data["origen_destino"] = self.origen_destino_entry.get()
+        self.updated_data["observaciones"] = self.observaciones_text.get("1.0", tk.END).strip()
+        if self.tipo_antecedente_entry:
+            self.updated_data["tipo"] = self.tipo_antecedente_entry.get()
+        
+        self.destroy()
+
 # --- Standalone Test ---
 if __name__ == '__main__':
     # Create a dummy root window
     root = tk.Tk()
     root.title("Main Test Window (NuevaEntrada)")
-    root.withdraw() # Hide dummy root
+    # root.withdraw() # Hide dummy root for normal operation, show for testing dialog placement
 
     # Create dummy user object
-    dummy_user = None
-    if _database_manager_available and models: 
-        dummy_user = models.Usuario(id=99, username="test_runner", password_hash="", roles=[])
+    dummy_user_obj = None # Renamed to avoid conflict with DummyUser class
+    if _database_manager_available and hasattr(models, 'Usuario'): 
+        dummy_user_obj = models.Usuario(id=99, username="test_runner", password_hash="", roles=[])
     else: 
-        dummy_user = DummyUser(username="test_runner_dummy", id=99)
+        dummy_user_obj = DummyUser(username="test_runner_dummy", id=99)
 
 
     # Mock database_manager, config_manager, crypto_utils if not available
     if not _database_manager_available:
+        # Determine if we are using real models or dummy models for mock
+        CanalModel = models.CanalEntrada if hasattr(models, 'CanalEntrada') else DummyCanalEntrada
+        RoleModel = models.Role if hasattr(models, 'Role') else DummyRole
+        CategoriaModel = models.Categoria if hasattr(models, 'Categoria') else DummyCategoria
+
         class MockDBManager:
-            def get_canales(self): return [DummyCanalEntrada(id=i, nombre=f"Canal Mock {i}") for i in range(1,4)]
-            def get_negociados(self): return [DummyRole(id=i, nombre_role=f"Negociado Mock {chr(65+i)}") for i in range(3)]
-            def get_cargos(self): return [DummyRole(id=i+10, nombre_role=f"Jefe Mock {i}", posicion=f"Posición {i}") for i in range(2)]
-            def get_categorias(self): return [DummyCategoria(nombre=f"Categoría Mock {i}") for i in range(1,5)]
-            def save_new_entrada(self, *args): print("MOCK DB: save_new_entrada called"); return 12345 # Simulate success
+            def get_canales(self): return [CanalModel(id=i, nombre=f"Canal Mock {i}") for i in range(1,4)]
+            def get_negociados(self): return [RoleModel(id=i, nombre_role=f"Negociado Mock {chr(65+i)}") for i in range(3)]
+            def get_cargos(self): return [RoleModel(id=i+10, nombre_role=f"Jefe Mock {i}", posicion=f"Posición {i}") for i in range(2)]
+            def get_categorias(self): return [CategoriaModel(nombre=f"Categoría Mock {i}") for i in range(1,5)]
+            def save_new_entrada(self, *args, **kwargs): 
+                print("MOCK DB: save_new_entrada called with (args, kwargs):", args, kwargs)
+                return 12345 # Simulate success ID
         
         database_manager = MockDBManager() 
         print("Using MOCK database_manager for NuevaEntradaWindow test.")
 
     if not _config_manager_available:
         class MockConfigManager:
-            def get_base_dir(self): return "/tmp/py_desktop_app_mock_nueva_entrada"
+            def get_base_dir(self): 
+                # Use a local temp directory for base_dir to ensure it's writable
+                # and doesn't interfere with other parts of the system.
+                # It's also good practice for tests to clean up after themselves if possible.
+                _base_dir = os.path.join(os.getcwd(), "TEMP_NUEVA_ENTRADA_BASE_DIR")
+                os.makedirs(_base_dir, exist_ok=True)
+                return _base_dir
         config_manager = MockConfigManager()
-        # Ensure mock base_dir exists for file operations during test
-        if not os.path.exists(config_manager.get_base_dir()):
-            os.makedirs(config_manager.get_base_dir(), exist_ok=True)
-        print("Using MOCK config_manager for NuevaEntradaWindow test.")
+        print(f"Using MOCK config_manager with BASE_DIR: {config_manager.get_base_dir()}")
 
     if not _crypto_utils_available:
+        import shutil # Make sure shutil is imported for the mock
         class MockCryptoUtils:
             FIXED_KEY_STRING = "mock_key_1234567890123456789012" # Dummy key
-            def encrypt(self, key, in_f, out_f): print(f"MOCK CRYPTO: Encrypt {in_f} to {out_f}"); shutil.copy2(in_f, out_f)
-            def decrypt(self, key, in_f, out_f): print(f"MOCK CRYPTO: Decrypt {in_f} to {out_f}"); shutil.copy2(in_f, out_f)
+            class CryptoException(Exception): # Define the custom exception if not available
+                pass 
+            def encrypt(self, key, in_filepath, out_filepath):
+                print(f"MOCK CRYPTO: 'Encrypting' {in_filepath} to {out_filepath}")
+                # For testing, ensure the input file exists, otherwise create a dummy one
+                if not os.path.exists(in_filepath):
+                    print(f"MOCK CRYPTO: Source file {in_filepath} not found, creating dummy file for test.")
+                    with open(in_filepath, 'wb') as f_in: # write some bytes
+                        f_in.write(os.urandom(1024)) # 1KB dummy data
+                shutil.copy2(in_filepath, out_filepath) # Simulate encryption by copying
+
+            def decrypt(self, key, in_filepath, out_filepath):
+                print(f"MOCK CRYPTO: 'Decrypting' {in_filepath} to {out_filepath}")
+                shutil.copy2(in_filepath, out_filepath) # Simulate decryption by copying
         crypto_utils = MockCryptoUtils()
         print("Using MOCK crypto_utils for NuevaEntradaWindow test.")
 
 
     # Button to open the NuevaEntradaWindow
     def open_nueva_entrada_dialog():
-        dialog = NuevaEntradaWindow(root, dummy_user)
-        root.wait_window(dialog) # Wait for dialog to close
+        dialog = NuevaEntradaWindow(root, dummy_user_obj) # Use renamed dummy_user_obj
+        # root.wait_window(dialog) # This makes the mainloop wait, useful if root is hidden
 
-    ttk.Button(root, text="Abrir Nueva Entrada Dialog", command=open_nueva_entrada_dialog).pack(padx=20, pady=20)
+    main_button = ttk.Button(root, text="Abrir Nueva Entrada Dialog", command=open_nueva_entrada_dialog)
+    main_button.pack(padx=20, pady=20)
     root.deiconify() # Show the button window
     root.mainloop()
 

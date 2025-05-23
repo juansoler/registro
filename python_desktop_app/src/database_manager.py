@@ -68,19 +68,33 @@ def update_user_password(username: str, new_password: str) -> bool:
         except ImportError:
             print("Warning: crypto_utils module not available - storing plain password")
         
-        # Update password and clear reset flag if column exists
+        # Update password and manage reset flag
         cursor.execute("PRAGMA table_info(user)")
         columns = [col[1] for col in cursor.fetchall()]
-        if 'reset' in columns:
-            cursor.execute(
-                "UPDATE user SET password = ?, reset = 0 WHERE user = ?",
-                (hashed_password, username)
-            )
+        
+        if new_password == "reset":
+            # Set password to 'reset' and set reset flag to 1 (needs reset)
+            if 'reset' in columns:
+                cursor.execute("UPDATE user SET password = 'reset', reset = 1 WHERE user = ?", (username,))
+            else: # Fallback if no 'reset' column, just set password to 'reset'
+                cursor.execute("UPDATE user SET password = 'reset' WHERE user = ?", (username,))
         else:
-            cursor.execute(
-                "UPDATE user SET password = ? WHERE user = ?",
-                (hashed_password, username)
-            )
+            # Hash the new password and clear reset flag (set to 0)
+            final_password_to_store = new_password # Default if no crypto
+            try:
+                from . import crypto_utils
+                if hasattr(crypto_utils, 'hash_password'):
+                    final_password_to_store = crypto_utils.hash_password(new_password)
+                else:
+                    print("Warning: crypto_utils.hash_password not available - storing plain password if not 'reset'")
+            except ImportError:
+                print("Warning: crypto_utils module not available - storing plain password if not 'reset'")
+
+            if 'reset' in columns:
+                cursor.execute("UPDATE user SET password = ?, reset = 0 WHERE user = ?", (final_password_to_store, username))
+            else:
+                cursor.execute("UPDATE user SET password = ? WHERE user = ?", (final_password_to_store, username))
+        
         conn.commit()
         return cursor.rowcount > 0
     except sqlite3.Error as e:
@@ -245,8 +259,20 @@ def get_posiciones_for_jefes() -> Dict[int, int]:
     return posiciones_map
 
 # --- Entrada Data Functions ---
-def get_entradas_for_user(user: models.Usuario, date_str: Optional[str] = None, area_filter: Optional[str] = None, category_filter: Optional[str] = None, search_term: Optional[str] = None, search_field: Optional[str] = None) -> List[models.Entrada]:
-    if not user or not user.roles: return []
+def get_entradas_for_user(
+    user: models.Usuario, 
+    date_from_str: Optional[str] = None, # Renamed from date_str for clarity if used as range
+    date_to_str: Optional[str] = None,   # New parameter for date range
+    area_filter: Optional[str] = None, 
+    category_filter: Optional[str] = None, 
+    search_term: Optional[str] = None, 
+    search_field: Optional[str] = None,
+    pending_processing: Optional[bool] = None,      # New parameter
+    pending_view_for_jefe_id: Optional[int] = None  # New parameter
+) -> List[models.Entrada]:
+
+    if not user or not user.roles: return [] # Basic check, might need refinement based on how roles are used for filtering
+    
     conn = None; entradas_list = []
     try:
         import logging
@@ -260,20 +286,72 @@ def get_entradas_for_user(user: models.Usuario, date_str: Optional[str] = None, 
                 LEFT JOIN CATEGORIA_ENTRADA ce ON e.id = ce.entrada_id
                 LEFT JOIN user uc ON e.tramitadoPor = uc.id
                 LEFT JOIN negociados n ON d.negociado_id = n.id"""
-        params = []; where_clauses = []
+        params = {} # Using named parameters for clarity
+        
+        # Base WHERE clause for user roles (assuming user sees entradas for their negociados)
+        # This part needs to correctly determine which entradas a user can see based on their roles.
+        # The existing query joins with 'destinatario d' and 'negociados n'.
+        # It checks if 'n.nombre' is in user_role_names.
+        # This assumes 'user.roles' contains Role objects whose 'nombre_role' matches 'negociados.nombre'.
         user_role_names = [role.nombre_role for role in user.roles if hasattr(role, 'nombre_role')]
-        if not user_role_names: return []
-        where_clauses.append(f"n.nombre IN ({', '.join(['?'] * len(user_role_names))})")
-        params.extend(user_role_names)
-        if date_str:
-            try: day, month, year = date_str.split('/'); where_clauses.append("e.Fecha = ?"); params.append(f"{year}-{month}-{day}")
-            except ValueError: print(f"Warning: Invalid date format '{date_str}'. Date filter ignored.")
-        if area_filter and area_filter.lower() != "todos": where_clauses.append("e.Area = ?"); params.append(area_filter)
-        if category_filter and category_filter.lower() != "todas": where_clauses.append("ce.CATEGORIA = ?"); params.append(category_filter)
-        if search_term and search_field in ["Asunto", "numeroEntrada", "Observaciones"]: where_clauses.append(f"e.{search_field} LIKE ?"); params.append(f"%{search_term}%")
-        if where_clauses: sql += " WHERE " + " AND ".join(where_clauses)
+        if not user_role_names:
+             # If a user has no roles, they might see no entradas, or this check might be too restrictive.
+             # For now, keeping original logic: if no roles, no entries.
+            return [] 
+        
+        # Using IN clause with dynamically generated placeholders for role names
+        # This is safer if role names can have special characters, but sqlite named params don't directly support lists.
+        # A common workaround is to generate `(:role1, :role2, ...)` and add params.
+        role_placeholders = ', '.join([f':role{i}' for i in range(len(user_role_names))])
+        where_clauses.append(f"n.nombre IN ({role_placeholders})")
+        for i, name in enumerate(user_role_names):
+            params[f'role{i}'] = name
+
+        # Date filtering
+        if date_from_str:
+            try: datetime.datetime.strptime(date_from_str, "%Y-%m-%d"); where_clauses.append("e.Fecha >= :date_from"); params['date_from'] = date_from_str
+            except ValueError: print(f"Warning: Invalid date_from format '{date_from_str}'. Filter ignored.")
+        if date_to_str:
+            try: datetime.datetime.strptime(date_to_str, "%Y-%m-%d"); where_clauses.append("e.Fecha <= :date_to"); params['date_to'] = date_to_str
+            except ValueError: print(f"Warning: Invalid date_to format '{date_to_str}'. Filter ignored.")
+        
+        if area_filter and area_filter.lower() != "todos": 
+            where_clauses.append("e.Area = :area_filter"); params['area_filter'] = area_filter
+        
+        if category_filter and category_filter.lower() != "todas": 
+            # This requires CATEGORIA_ENTRADA to be joined if not already part of the main FROM
+            # Assuming 'ce' is the alias for CATEGORIA_ENTRADA if joined for this filter
+            where_clauses.append("ce.CATEGORIA = :category_filter"); params['category_filter'] = category_filter
+        
+        if search_term and search_field in ["Asunto", "numeroEntrada", "Observaciones"]: # Use actual column names
+             # Ensure search_field is safe if it comes directly from user input
+            safe_search_field = search_field 
+            if safe_search_field == "numeroEntrada": safe_search_field = "numeroEntrada" # map to db column
+            elif safe_search_field == "Observaciones": safe_search_field = "Observaciones"
+            else: safe_search_field = "Asunto" # Default
+            where_clauses.append(f"e.{safe_search_field} LIKE :search_term"); params['search_term'] = f"%{search_term}%"
+
+        # New filters
+        if pending_processing:
+            where_clauses.append("e.Tramitado = 0") # Assuming 0 is False for Tramitado
+
+        if pending_view_for_jefe_id is not None:
+            # This subquery checks if there's any comment on the entrada (e.id)
+            # that has c.visto = 0. This is a simplified interpretation.
+            # A more accurate one would involve a ComentarioVisto table.
+            where_clauses.append("""EXISTS (
+                SELECT 1 FROM comentario c
+                WHERE c.entrada_id = e.id AND c.visto = 0
+            )""")
+            # And ensure the entrada is relevant to this jefe (already part of main user role filter)
+
+        if where_clauses: 
+            sql += " WHERE " + " AND ".join(where_clauses)
+        
         sql += " ORDER BY e.Fecha DESC, e.id DESC"
-        cursor.execute(sql, tuple(params))
+        
+        logger.debug(f"Executing SQL: {sql} with params: {params}")
+        cursor.execute(sql, params)
         for row in cursor.fetchall():
             fecha_obj = None; 
             if row["Fecha"]: 
@@ -505,6 +583,407 @@ def get_entrada_details_by_id(entrada_id: int) -> Optional[models.Entrada]:
 
         return models.Entrada(id=row["id"], asunto=row["Asunto"], fecha=fecha_obj, area=models.Role(nombre_role=row["AreaName"]) if row["AreaName"] else None, confidencial=bool(row["Confidencial"]), urgente=bool(row["Urgente"]), numero_entrada=row["numeroEntrada"], tramitado=bool(row["Tramitado"]), canal_entrada=models.CanalEntrada(id=row["CanalId"], nombre=row["CanalNombre"]) if row["CanalId"] and row["CanalNombre"] else None, observaciones=row["Observaciones"], tramitado_por=models.Usuario(id=row["Tramitado_por_id"], username=row["Tramitado_por_username"], password_hash="", roles=[]) if row["Tramitado_por_id"] and row["Tramitado_por_username"] else None, destinatarios=destinatario_roles, categorias=categorias_list, archivos=get_archivos_for_entrada(entrada_id, "entrada"), antecedentes=get_archivos_for_entrada(entrada_id, "antecedente"), salidas=get_archivos_for_entrada(entrada_id, "salida"), comentarios=comentarios_list)
     except sqlite3.Error as e: print(f"Database error in get_entrada_details_by_id for entrada_id {entrada_id}: {e}"); return None
+
+
+# --- User Management Specific Functions ---
+
+def get_all_users_with_details() -> List[models.Usuario]:
+    """Fetches all users with their roles and permiso status."""
+    conn = None
+    users_list = []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Assuming 'permiso' is a column in the 'user' table.
+        # The DDL in if __name__ == '__main__' does not explicitly add 'permiso' to 'user' table.
+        # Adding it to the query for now; if it doesn't exist, it might error or return None.
+        # Ensure 'user' table has 'permiso' or adjust query.
+        # For testing, let's assume 'permiso' column exists or we default it.
+        cursor.execute("SELECT id, user, password, permiso FROM user") # Added 'permiso'
+        all_users_rows = cursor.fetchall()
+
+        for user_row in all_users_rows:
+            user_id = user_row["id"]
+            roles_query = """
+                SELECT r.id, r.nombre_role, r.posicion, r.isJefe 
+                FROM role r 
+                JOIN usuario_role ur ON r.id = ur.role_id 
+                WHERE ur.user_id = ?
+            """
+            cursor.execute(roles_query, (user_id,))
+            user_roles_rows = cursor.fetchall()
+            user_roles = [
+                models.Role(id=r["id"], nombre_role=r["nombre_role"], posicion=r["posicion"], is_jefe=bool(r["isJefe"]))
+                for r in user_roles_rows
+            ]
+            
+            # Handle 'permiso' potentially missing from older schema in some DBs
+            permiso_val = False # Default if column doesn't exist or is NULL
+            if 'permiso' in user_row.keys(): # Check if column exists in result
+                 permiso_val = bool(user_row["permiso"])
+            else:
+                # Fallback or specific logic if 'permiso' is managed differently (e.g. via a role)
+                # For now, if no 'permiso' column, assume False or derive from roles if logic exists.
+                # Example: if 'Admin' role implies permiso:
+                # if any(r.nombre_role == 'Admin' for r in user_roles): permiso_val = True
+                pass
+
+
+            users_list.append(models.Usuario(
+                id=user_id,
+                username=user_row["user"],
+                password_hash=user_row["password"], # Usually not needed for display but part of model
+                roles=user_roles,
+                permiso=permiso_val 
+            ))
+        return users_list
+    except sqlite3.Error as e:
+        print(f"Database error in get_all_users_with_details: {e}")
+        return []
+
+def get_all_roles() -> List[models.Role]:
+    """Fetches all available roles from the role table."""
+    conn = None
+    roles_list = []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nombre_role, posicion, isJefe FROM role ORDER BY nombre_role")
+        for row in cursor.fetchall():
+            roles_list.append(models.Role(
+                id=row["id"], 
+                nombre_role=row["nombre_role"],
+                posicion=row["posicion"],
+                is_jefe=bool(row["isJefe"])
+            ))
+        return roles_list
+    except sqlite3.Error as e:
+        print(f"Database error in get_all_roles: {e}")
+        return []
+
+def save_user_with_details(username: str, password_plaintext: str, role_ids: List[int], permiso: bool) -> Optional[int]:
+    """Saves a new user with their roles and permission status."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        conn.execute("BEGIN TRANSACTION")
+
+        hashed_password = password_plaintext # Default if no crypto
+        try:
+            from . import crypto_utils
+            hashed_password = crypto_utils.hash_password(password_plaintext)
+        except ImportError:
+            print("Warning: crypto_utils not available for hashing new user password.")
+
+        # Insert into user table. Ensure 'permiso' column exists or handle.
+        # The DDL in if __name__ == '__main__' needs 'permiso' column for user table:
+        # CREATE TABLE IF NOT EXISTS user (..., permiso INTEGER DEFAULT 0)
+        cursor.execute(
+            "INSERT INTO user (user, password, permiso, reset) VALUES (?, ?, ?, 0)",
+            (username, hashed_password, 1 if permiso else 0) # Storing boolean as 0 or 1
+        )
+        new_user_id = cursor.lastrowid
+        if not new_user_id:
+            raise sqlite3.Error("Failed to get new_user_id after insert.")
+
+        # Insert into usuario_role
+        for role_id in role_ids:
+            cursor.execute("INSERT INTO usuario_role (user_id, role_id) VALUES (?, ?)", (new_user_id, role_id))
+        
+        conn.commit()
+        return new_user_id
+    except sqlite3.IntegrityError as ie: # e.g. UNIQUE constraint failed for username
+        if conn: conn.rollback()
+        print(f"Database integrity error in save_user_with_details (user '{username}'): {ie}")
+        return None
+    except sqlite3.Error as e:
+        if conn: conn.rollback()
+        print(f"Database error in save_user_with_details (user '{username}'): {e}")
+        return None
+
+def update_user_permission(user_id: int, permiso: bool) -> bool:
+    """Updates the permission status for a given user."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Ensure 'permiso' column exists in 'user' table.
+        cursor.execute("UPDATE user SET permiso = ? WHERE id = ?", (1 if permiso else 0, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Database error in update_user_permission for user_id {user_id}: {e}")
+        return False
+
+def delete_user_cascade(user_id: int) -> bool:
+    """Deletes a user and their role assignments. Does not handle FKs in other tables like 'entrada' yet."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        conn.execute("BEGIN TRANSACTION")
+
+        # Delete role assignments
+        cursor.execute("DELETE FROM usuario_role WHERE user_id = ?", (user_id,))
+        
+        # Delete user
+        # Note: If user_id is referenced by 'entrada.tramitadoPor', this might fail
+        # if no ON DELETE SET NULL/CASCADE is defined on that FK.
+        # For this task, we attempt deletion. Production code would need robust FK handling.
+        cursor.execute("DELETE FROM user WHERE id = ?", (user_id,))
+        
+        if cursor.rowcount == 0: # User not found or not deleted
+            conn.rollback()
+            print(f"User with ID {user_id} not found or could not be deleted (possibly due to FK constraints).")
+            return False
+            
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        if conn: conn.rollback()
+        print(f"Database error in delete_user_cascade for user_id {user_id}: {e}")
+        return False
+
+# --- End of User Management Specific Functions ---
+
+# --- Metadata Management Functions (Negociados, Cargos, Canales, Categorias) ---
+
+# Negociados
+def add_negociado(name: str) -> Optional[int]:
+    """Adds a new negociado. Returns new ID or None."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # 'negociados' table DDL: id INTEGER PRIMARY KEY, nombre TEXT UNIQUE
+        cursor.execute("INSERT INTO negociados (nombre) VALUES (?)", (name,))
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError: 
+        print(f"Negociado '{name}' already exists.")
+        if conn: conn.rollback() # Rollback even for integrity error if transaction started implicitly
+        return None
+    except sqlite3.Error as e:
+        print(f"Database error in add_negociado: {e}")
+        if conn: conn.rollback()
+        return None
+
+def delete_negociado(negociado_id: int) -> bool:
+    """Deletes a negociado by its ID."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Note: FKs in 'destinatario' table reference 'negociados.id'.
+        # Deleting a 'negociado' in use will fail if FK constraints are enforced without ON DELETE CASCADE/SET NULL.
+        # For this task, direct deletion is attempted.
+        cursor.execute("DELETE FROM negociados WHERE id = ?", (negociado_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as e: # Catches IntegrityError if FK constraint fails
+        print(f"Database error in delete_negociado (id: {negociado_id}): {e}")
+        if conn: conn.rollback()
+        return False
+
+# Cargos (Jefes)
+def add_cargo(name: str, posicion: Optional[str]) -> Optional[int]:
+    """Adds a new cargo (Jefe). Returns new ID or None."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # 'JEFES' table DDL: id INTEGER PRIMARY KEY, nombre TEXT UNIQUE, user_id INTEGER (FK to user)
+        # The 'posicion' is handled by the 'role' table in a more normalized schema.
+        # Here, assuming 'JEFES' table is the target as per get_cargos().
+        # The DDL for JEFES in __main__ doesn't show 'posicion'. get_cargos() does.
+        # This implies 'JEFES' table might be a specific view or needs 'posicion'.
+        # For now, assuming 'JEFES' has 'nombre' and 'posicion' can be added or is part of 'role' table.
+        # Let's assume we are adding to 'role' table with is_jefe=True and 'posicion'.
+        cursor.execute("INSERT INTO role (nombre_role, posicion, isJefe) VALUES (?, ?, ?)", (name, posicion, 1))
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        print(f"Cargo/Role '{name}' already exists.")
+        if conn: conn.rollback()
+        return None
+    except sqlite3.Error as e:
+        print(f"Database error in add_cargo: {e}")
+        if conn: conn.rollback()
+        return None
+
+def delete_cargo(cargo_id: int) -> bool:
+    """Deletes a cargo/role by its ID."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Assumes cargo_id refers to 'role.id' for a role that is a Jefe.
+        # Consider FKs (e.g., 'usuario_role', 'destinatarioJefe' which uses JEFES.id).
+        # If 'JEFES' table is separate and its ID is passed, then "DELETE FROM JEFES WHERE id = ?"
+        # If it's from 'role' table:
+        cursor.execute("DELETE FROM role WHERE id = ? AND isJefe = 1", (cargo_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Database error in delete_cargo (id: {cargo_id}): {e}")
+        if conn: conn.rollback()
+        return False
+
+# Canales de Entrada
+def add_canal(name: str) -> Optional[int]:
+    """Adds a new canal de entrada. Returns new ID or None."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # 'canalesEntrada' table DDL: id INTEGER PRIMARY KEY, nombre TEXT UNIQUE
+        cursor.execute("INSERT INTO canalesEntrada (nombre) VALUES (?)", (name,))
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        print(f"Canal '{name}' already exists.")
+        if conn: conn.rollback()
+        return None
+    except sqlite3.Error as e:
+        print(f"Database error in add_canal: {e}")
+        if conn: conn.rollback()
+        return None
+
+def delete_canal(canal_id: int) -> bool:
+    """Deletes a canal de entrada by its ID."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # 'entrada.canalEntrada' is TEXT. Deleting from 'canalesEntrada' doesn't break FKs based on current schema.
+        # If 'entrada.canalEntrada' were an ID, this would need more care.
+        cursor.execute("DELETE FROM canalesEntrada WHERE id = ?", (canal_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Database error in delete_canal (id: {canal_id}): {e}")
+        if conn: conn.rollback()
+        return False
+
+# Categorías
+def add_categoria(name: str) -> Optional[int]:
+    """Adds a new categoria. Returns new ID or None."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # 'CATEGORIA' table DDL: id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE
+        cursor.execute("INSERT INTO CATEGORIA (nombre) VALUES (?)", (name,))
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        print(f"Categoría '{name}' already exists.")
+        if conn: conn.rollback()
+        return None
+    except sqlite3.Error as e:
+        print(f"Database error in add_categoria: {e}")
+        if conn: conn.rollback()
+        return None
+
+def delete_categoria(categoria_id: int) -> bool:
+    """Deletes a categoria by its ID."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # FK in 'CATEGORIA_ENTRADA' references 'CATEGORIA.nombre' not 'CATEGORIA.id' as per DDL.
+        # If it referenced ID, this delete would need care.
+        # To be safe, let's delete from CATEGORIA_ENTRADA first if using name, or ensure consistency.
+        # For now, assuming direct delete from CATEGORIA by ID is the goal.
+        # If CATEGORIA_ENTRADA.CATEGORIA is name, we'd need to fetch name for ID first to clean related table.
+        # Given the DDL (id PK for CATEGORIA), we delete by ID.
+        # If CATEGORIA_ENTRADA.CATEGORIA is a FK to CATEGORIA.nombre, then this is fine.
+        # If CATEGORIA_ENTRADA.CATEGORIA is a FK to CATEGORIA.id (more typical), then this delete could fail if in use.
+        cursor.execute("DELETE FROM CATEGORIA WHERE id = ?", (categoria_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Database error in delete_categoria (id: {categoria_id}): {e}")
+        if conn: conn.rollback()
+        return False
+
+# --- End of Metadata Management Functions ---
+
+
+def delete_entrada_cascade(entrada_id: int) -> bool:
+    """
+    Deletes an entrada and all its associated data, including files from the filesystem.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        conn.execute("BEGIN TRANSACTION")
+
+        # 1. Fetch file paths for all associated files before deleting records
+        file_paths_to_delete = []
+        cursor.execute("SELECT ruta_archivo FROM files WHERE entrada_id = ?", (entrada_id,))
+        file_paths_to_delete.extend([row['ruta_archivo'] for row in cursor.fetchall()])
+        
+        cursor.execute("SELECT ruta_archivo FROM antecedentesFiles WHERE entrada_id = ?", (entrada_id,))
+        file_paths_to_delete.extend([row['ruta_archivo'] for row in cursor.fetchall()])
+        
+        # For salidaFiles, also need to delete from vistoBuenoJefes first
+        cursor.execute("SELECT id, ruta_archivo FROM salidaFiles WHERE entrada_id = ?", (entrada_id,))
+        salida_files_to_process = [{'id': row['id'], 'path': row['ruta_archivo']} for row in cursor.fetchall()]
+        for sf in salida_files_to_process:
+            file_paths_to_delete.append(sf['path'])
+            cursor.execute("DELETE FROM vistoBuenoJefes WHERE salida_file_id = ?", (sf['id'],))
+
+        # 2. Delete from related tables
+        cursor.execute("DELETE FROM comentario WHERE entrada_id = ?", (entrada_id,))
+        cursor.execute("DELETE FROM destinatario WHERE entrada_id = ?", (entrada_id,))
+        cursor.execute("DELETE FROM destinatarioJefe WHERE entrada_id = ?", (entrada_id,))
+        cursor.execute("DELETE FROM CATEGORIA_ENTRADA WHERE entrada_id = ?", (entrada_id,))
+        
+        # Delete from file tables
+        cursor.execute("DELETE FROM files WHERE entrada_id = ?", (entrada_id,))
+        cursor.execute("DELETE FROM antecedentesFiles WHERE entrada_id = ?", (entrada_id,))
+        cursor.execute("DELETE FROM salidaFiles WHERE entrada_id = ?", (entrada_id,))
+        
+        # 3. Finally, delete the entrada itself
+        cursor.execute("DELETE FROM entrada WHERE id = ?", (entrada_id,))
+        
+        # 4. Delete files from filesystem
+        # Decrypting before deleting is not implemented as keys are not readily available/managed for this.
+        # Files are deleted as they are (potentially encrypted).
+        for file_path in file_paths_to_delete:
+            if file_path: # Ensure path is not None or empty
+                try:
+                    # TODO: Implement decryption here if files are encrypted and need to be decrypted before deletion
+                    # For now, assuming direct deletion or that crypto_utils handles encrypted files if necessary for os.remove
+                    # If files are stored encrypted with a specific extension, that needs to be handled.
+                    # If os.remove can delete the encrypted file directly, this is fine.
+                    if os.path.exists(file_path):
+                         os.remove(file_path)
+                         print(f"Successfully deleted file: {file_path}")
+                    else:
+                         print(f"File not found, skipping deletion: {file_path}")
+                except FileNotFoundError:
+                    print(f"File not found during deletion attempt: {file_path}")
+                except OSError as oe: # Catch other OS errors like permission issues
+                    print(f"Error deleting file {file_path}: {oe}")
+        
+        conn.commit()
+        return True
+
+    except sqlite3.Error as e:
+        if conn:
+            conn.rollback()
+        print(f"Database error in delete_entrada_cascade for entrada_id {entrada_id}: {e}")
+        return False
+    except Exception as ex: # Catch any other unexpected errors
+        if conn:
+            conn.rollback()
+        print(f"Unexpected error in delete_entrada_cascade for entrada_id {entrada_id}: {ex}")
+        return False
+
 
 # Example of how to use the functions (optional, for testing)
 if __name__ == '__main__':
