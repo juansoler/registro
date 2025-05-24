@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Carpeta de entrada - Login</title>
+    <link rel="stylesheet" href="login.css">
+</head>
+<body>
+    <div class="login-container">
+        <h2>Login</h2>
+        <div class="form-group">
+            <label for="username">Usuario:</label>
+            <input type="text" id="username" name="username">
+            <small id="username-caps-warning" class="caps-warning" style="display:none;">Mayúsculas activada</small>
+        </div>
+        <div class="form-group">
+            <label for="password">Contraseña:</label>
+            <input type="password" id="password" name="password">
+            <small id="password-caps-warning" class="caps-warning" style="display:none;">Mayúsculas activada</small>
+        </div>
+        <div class="form-group">
+            <input type="checkbox" id="show-password">
+            <label for="show-password">Mostrar contraseña</label>
+        </div>
+        <div class="form-group" id="new-password-group" style="display:none;">
+            <label for="new-password">Nueva Contraseña:</label>
+            <input type="password" id="new-password" name="new-password">
+            <small id="new-password-caps-warning" class="caps-warning" style="display:none;">Mayúsculas activada</small>
+        </div>
+        <button id="connect-button">Conectar</button>
+        <p id="error-message" class="error-message"></p>
+        
+        <div class="version-info">
+            <p id="version-label">Versión actual: <span id="local-version"></span></p>
+            <button id="update-button" style="display:none;">Actualizar a <span id="remote-version"></span></button>
+        </div>
+    </div>
+    <script src="renderer.js"></script> 
+</body>
+</html>

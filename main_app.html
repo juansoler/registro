@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Carpeta de Entrada Principal</title>
+    <link rel="stylesheet" href="main_app.css">
+</head>
+<body>
+    <div id="app-container">
+        <div id="control-panel">
+            <!-- Controls will be added here -->
+            <div class="control-group">
+                <label for="search-type">BUSQUEDA POR:</label>
+                <select id="search-type">
+                    <option value="asunto">Asunto</option>
+                    <option value="num_entrada">NUM. ENTRADA</option>
+                </select>
+                <input type="text" id="search-term" placeholder="Término de búsqueda...">
+            </div>
+            <div class="control-group">
+                <label for="area-filter">Area:</label>
+                <select id="area-filter">
+                    <option value="Todos">Todos</option>
+                    <!-- Options to be populated dynamically -->
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="category-filter">Categoria:</label>
+                <select id="category-filter">
+                    <option value="Todas">Todas</option>
+                    <!-- Options to be populated dynamically -->
+                </select>
+            </div>
+            <div class="control-group">
+                <button id="prev-day-button">&lt;</button>
+                <input type="date" id="date-picker">
+                <button id="next-day-button">&gt;</button>
+            </div>
+            <button id="new-entry-button">Nueva entrada</button>
+            <button id="refresh-button">Actualizar</button>
+            <button id="pending-process-button">Mostrar Pdte. Tramit.</button>
+            <button id="pending-view-button">Mostrar Pdte. ver</button>
+        </div>
+        <div id="table-container">
+            <!-- Table will be rendered here -->
+            <p>Main table will appear here.</p>
+        </div>
+        <div id="log-panel">
+            <span id="log-db-status">DB: Connecting...</span>
+            <span id="log-user-area">Usuario:</span>
+            <span id="log-last-update">Última Actualización:</span>
+        </div>
+    </div>
+    <script src="main_app_renderer.js"></script>
+</body>
+</html>

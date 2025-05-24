@@ -1,0 +1,13 @@
+body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #f4f4f4; margin: 0; }
+.login-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); width: 300px; }
+.form-group { margin-bottom: 15px; }
+.form-group label { display: block; margin-bottom: 5px; }
+.form-group input[type="text"], .form-group input[type="password"] { width: calc(100% - 22px); padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+.form-group input[type="checkbox"] { margin-right: 5px; }
+button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%; }
+button:hover { background-color: #0056b3; }
+.error-message { color: red; margin-top: 10px; text-align: center; min-height: 1em; /* Reserve space */ }
+.caps-warning { color: orange; font-size: 0.8em; }
+.version-info { margin-top: 20px; text-align: center; font-size: 0.9em; }
+#update-button { background-color: #28a745; margin-top: 5px;} /* Green for update */
+#update-button.highlight { background-color: #ffc107; } /* Yellow/Orange for needs update attention */
