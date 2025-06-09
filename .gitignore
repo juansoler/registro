@@ -1,0 +1,8 @@
+# Ignore build artifacts and IDE files
+bin/
+*.class
+.classpath
+.project
+.settings/
+# Node modules
+Electron/node_modules/
