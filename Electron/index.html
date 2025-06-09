@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Registro Electron</title>
+</head>
+<body>
+  <div id="login-container">
+    <h2>Login</h2>
+    <form id="login">
+      <input id="user" placeholder="Usuario" required />
+      <input id="pass" type="password" placeholder="Contraseña" required />
+      <button type="submit">Entrar</button>
+    </form>
+    <div id="login-error" style="color:red"></div>
+  </div>
+
+  <div id="main" style="display:none">
+    <nav>
+      <button id="show-entries">Entradas</button>
+      <button id="show-new-entry">Nueva entrada</button>
+      <button id="show-users">Usuarios</button>
+    </nav>
+
+    <section id="entries-section">
+      <h1>Entradas</h1>
+      <table id="entries">
+        <thead>
+          <tr><th>ID</th><th>Asunto</th><th>Fecha</th><th>Área</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="new-entry-section" style="display:none">
+      <h1>Nueva entrada</h1>
+      <form id="new-entry-form">
+        <input id="entry-asunto" placeholder="Asunto" required />
+        <input id="entry-fecha" type="date" required />
+        <input id="entry-area" placeholder="Área" required />
+        <label><input type="checkbox" id="entry-confidencial" />Confidencial</label>
+        <label><input type="checkbox" id="entry-urgente" />Urgente</label>
+        <textarea id="entry-observaciones" placeholder="Observaciones"></textarea>
+        <input id="entry-numero" placeholder="Número" />
+        <button type="submit">Guardar</button>
+      </form>
+      <div id="entry-result"></div>
+    </section>
+
+    <section id="users-section" style="display:none">
+      <h1>Usuarios</h1>
+      <ul id="user-list"></ul>
+      <h2>Agregar usuario</h2>
+      <form id="add-user-form">
+        <input id="new-user" placeholder="Usuario" required />
+        <input id="new-pass" type="password" placeholder="Contraseña" required />
+        <input id="new-role" placeholder="Role" required />
+        <button type="submit">Crear</button>
+      </form>
+      <div id="user-result"></div>
+    </section>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
