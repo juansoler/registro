@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Registro Electron</title>
+</head>
+<body>
+  <div id="login-container">
+    <h2>Login</h2>
+    <form id="login">
+      <input id="user" placeholder="Usuario" required />
+      <input id="pass" type="password" placeholder="Contraseña" required />
+      <button type="submit">Entrar</button>
+    </form>
+    <div id="login-error" style="color:red"></div>
+  </div>
+
+  <div id="main" style="display:none">
+    <nav>
+      <button id="show-entries">Entradas</button>
+      <button id="show-new-entry">Nueva entrada</button>
+      <button id="show-users">Usuarios</button>
+    </nav>
+
+    <section id="entries-section">
+      <h1>Entradas</h1>
+      <table id="entries">
+        <thead>
+          <tr><th>ID</th><th>Asunto</th><th>Fecha</th><th>Área</th><th>Canal</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="new-entry-section" style="display:none">
+      <h1>Nueva entrada</h1>
+      <form id="new-entry-form">
+        <input id="entry-asunto" placeholder="Asunto" required />
+        <input id="entry-fecha" type="date" required />
+        <input id="entry-area" placeholder="Área" required />
+        <input id="entry-canal" placeholder="Canal de entrada" />
+        <textarea id="entry-destinatarios" placeholder="Destinatarios"></textarea>
+        <textarea id="entry-jefes" placeholder="Jefes"></textarea>
+        <label><input type="checkbox" id="entry-confidencial" />Confidencial</label>
+        <label><input type="checkbox" id="entry-urgente" />Urgente</label>
+        <textarea id="entry-observaciones" placeholder="Observaciones"></textarea>
+        <input id="entry-numero" placeholder="Número" />
+        <div>
+          <label>Archivos entrada <input type="file" id="entry-files" multiple /></label>
+        </div>
+        <div>
+          <label>Antecedentes <input type="file" id="entry-antecedentes" multiple /></label>
+        </div>
+        <div>
+          <label>Salida <input type="file" id="entry-salida" multiple /></label>
+        </div>
+        <button type="submit">Guardar</button>
+      </form>
+      <div id="entry-result"></div>
+    </section>
+
+    <section id="edit-entry-section" style="display:none">
+      <h1>Editar entrada</h1>
+      <form id="edit-entry-form">
+        <input type="hidden" id="edit-id" />
+        <input id="edit-asunto" placeholder="Asunto" required />
+        <input id="edit-fecha" type="date" required />
+        <input id="edit-area" placeholder="Área" required />
+        <input id="edit-canal" placeholder="Canal de entrada" />
+        <textarea id="edit-destinatarios" placeholder="Destinatarios"></textarea>
+        <textarea id="edit-jefes" placeholder="Jefes"></textarea>
+        <label><input type="checkbox" id="edit-confidencial" />Confidencial</label>
+        <label><input type="checkbox" id="edit-urgente" />Urgente</label>
+        <textarea id="edit-observaciones" placeholder="Observaciones"></textarea>
+        <input id="edit-numero" placeholder="Número" />
+        <div>Archivos actuales
+          <ul id="existing-entrada"></ul>
+        </div>
+        <div>
+          <label>Añadir archivos entrada <input type="file" id="edit-files-entrada" multiple /></label>
+        </div>
+        <div>Antecedentes actuales
+          <ul id="existing-antecedente"></ul>
+        </div>
+        <div>
+          <label>Añadir antecedentes <input type="file" id="edit-files-antecedente" multiple /></label>
+        </div>
+        <div>Salida actual
+          <ul id="existing-salida"></ul>
+        </div>
+        <div>
+          <label>Añadir salida <input type="file" id="edit-files-salida" multiple /></label>
+        </div>
+        <textarea id="edit-comentario" placeholder="Comentario"></textarea>
+        <label><input type="checkbox" id="edit-visto" />Visto</label>
+        <button type="submit">Guardar</button>
+      </form>
+      <div id="edit-result"></div>
+    </section>
+
+    <section id="users-section" style="display:none">
+      <h1>Usuarios</h1>
+      <ul id="user-list"></ul>
+      <h2>Agregar usuario</h2>
+      <form id="add-user-form">
+        <input id="new-user" placeholder="Usuario" required />
+        <input id="new-pass" type="password" placeholder="Contraseña" required />
+        <input id="new-role" placeholder="Role" required />
+        <button type="submit">Crear</button>
+      </form>
+      <div id="user-result"></div>
+    </section>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
