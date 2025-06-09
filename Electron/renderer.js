@@ -47,6 +47,7 @@ window.addEventListener('DOMContentLoaded', () => {
       Fecha: document.getElementById('entry-fecha').value,
       Area: document.getElementById('entry-area').value,
       Canal: document.getElementById('entry-canal').value,
+
       Confidencial: document.getElementById('entry-confidencial').checked,
       Urgente: document.getElementById('entry-urgente').checked,
       Observaciones: document.getElementById('entry-observaciones').value,
@@ -62,6 +63,7 @@ window.addEventListener('DOMContentLoaded', () => {
       Files: Array.from(document.getElementById('entry-files').files).map((f) => f.path),
       Antecedentes: Array.from(document.getElementById('entry-antecedentes').files).map((f) => f.path),
       Salida: Array.from(document.getElementById('entry-salida').files).map((f) => f.path),
+
     };
     const id = await window.api.createEntry(entry);
     document.getElementById('entry-result').textContent = id ? 'Guardado con ID ' + id : 'Error al guardar';
@@ -79,6 +81,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const row = document.createElement('tr');
       row.dataset.id = e.id;
       row.innerHTML = `<td>${e.id}</td><td>${e.Asunto}</td><td>${e.Fecha}</td><td>${e.Area}</td><td>${e.Canal ?? ''}</td>`;
+
       tbody.appendChild(row);
     });
   }
@@ -168,4 +171,5 @@ window.addEventListener('DOMContentLoaded', () => {
     loadEntries();
     showSection('entries-section');
   });
+
 });

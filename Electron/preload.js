@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('api', {
   createEntry: (data) => ipcRenderer.invoke('create-entry', data),
   getEntry: (id) => ipcRenderer.invoke('get-entry', id),
   updateEntry: (data) => ipcRenderer.invoke('update-entry', data),
+
 });

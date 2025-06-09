@@ -31,6 +31,7 @@ function initializeSchema(db) {
   db.run("CREATE TABLE IF NOT EXISTS destinatario(id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER, area TEXT)");
   db.run("CREATE TABLE IF NOT EXISTS jefe_destinatario(id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER, jefe TEXT)");
   db.run("CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER, tipo TEXT, path TEXT)");
+
     db.run("CREATE TABLE IF NOT EXISTS comentario(id INTEGER PRIMARY KEY AUTOINCREMENT, entrada_id INTEGER, usuario_id INTEGER, comentario TEXT, fecha TEXT, hora TEXT, visto INTEGER DEFAULT 0)");
   });
 }
@@ -337,6 +338,7 @@ ipcMain.handle('update-entry', async (evt, entry) => {
 
         db.close();
         resolve(true);
+
       }
     );
   });

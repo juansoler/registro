@@ -23,3 +23,5 @@ The prototype now supports the complete set of fields used when creando una entr
 Sigue ejecutándose con `--no-sandbox` y carece de interfaz avanzada, pero permite almacenar todas las propiedades principales de una entrada.
 
 Además de crear nuevas entradas ahora es posible seleccionar una existente en la tabla principal y editarla. El formulario de edición muestra los destinatarios, jefes, archivos adjuntos y permite añadir nuevos comentarios y ficheros.
+The prototype now includes basic user management and the ability to registrar nuevas entradas. It runs as root using Electron's `--no-sandbox` flag. Features from the Java version are still incomplete but expanding.
+
