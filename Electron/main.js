@@ -27,7 +27,11 @@ function initializeSchema(db) {
   db.serialize(() => {
     db.run("CREATE TABLE IF NOT EXISTS USER(id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT UNIQUE, password TEXT)");
     db.run("CREATE TABLE IF NOT EXISTS usuario_role(id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT, user_id INTEGER, permiso INTEGER DEFAULT 0, isJefe INTEGER DEFAULT 0)");
-    db.run("CREATE TABLE IF NOT EXISTS entrada(id INTEGER PRIMARY KEY AUTOINCREMENT, Asunto TEXT, Fecha TEXT, Area TEXT, Confidencial INTEGER, Urgente INTEGER, Observaciones TEXT, NumeroEntrada TEXT)");
+  db.run("CREATE TABLE IF NOT EXISTS entrada(id INTEGER PRIMARY KEY AUTOINCREMENT, Asunto TEXT, Fecha TEXT, Area TEXT, Canal TEXT, Confidencial INTEGER, Urgente INTEGER, Observaciones TEXT, NumeroEntrada TEXT)");
+  db.run("CREATE TABLE IF NOT EXISTS destinatario(id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER, area TEXT)");
+  db.run("CREATE TABLE IF NOT EXISTS jefe_destinatario(id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER, jefe TEXT)");
+  db.run("CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER, tipo TEXT, path TEXT)");
+
     db.run("CREATE TABLE IF NOT EXISTS comentario(id INTEGER PRIMARY KEY AUTOINCREMENT, entrada_id INTEGER, usuario_id INTEGER, comentario TEXT, fecha TEXT, hora TEXT, visto INTEGER DEFAULT 0)");
   });
 }
@@ -103,7 +107,7 @@ ipcMain.handle('validate-user', async (evt, { username, password }) => {
 ipcMain.handle('list-entries', async () => {
   return new Promise((resolve) => {
     const db = openDB();
-    db.all('SELECT id, Asunto, Fecha, Area FROM entrada ORDER BY id DESC LIMIT 20', (err, rows) => {
+    db.all('SELECT id, Asunto, Fecha, Area, Canal FROM entrada ORDER BY id DESC LIMIT 20', (err, rows) => {
       db.close();
       if (err) resolve([]);
       else resolve(rows);
@@ -157,12 +161,184 @@ ipcMain.handle('create-entry', async (evt, entry) => {
   return new Promise((resolve) => {
     const db = openDB();
     db.run(
-      'INSERT INTO entrada(Asunto, Fecha, Area, Confidencial, Urgente, Observaciones, NumeroEntrada) VALUES(?,?,?,?,?,?,?)',
-      [entry.Asunto, entry.Fecha, entry.Area, entry.Confidencial ? 1 : 0, entry.Urgente ? 1 : 0, entry.Observaciones, entry.NumeroEntrada],
-      function(err) {
+      'INSERT INTO entrada(Asunto, Fecha, Area, Canal, Confidencial, Urgente, Observaciones, NumeroEntrada) VALUES(?,?,?,?,?,?,?,?)',
+      [
+        entry.Asunto,
+        entry.Fecha,
+        entry.Area,
+        entry.Canal,
+        entry.Confidencial ? 1 : 0,
+        entry.Urgente ? 1 : 0,
+        entry.Observaciones,
+        entry.NumeroEntrada,
+      ],
+      function (err) {
+        if (err) {
+          db.close();
+          return resolve(null);
+        }
+        const entryId = this.lastID;
+
+        const saveDest = db.prepare('INSERT INTO destinatario(entry_id, area) VALUES(?,?)');
+        (entry.Destinatarios || []).forEach((d) => {
+          saveDest.run(entryId, d);
+        });
+        saveDest.finalize();
+
+        const saveJefe = db.prepare('INSERT INTO jefe_destinatario(entry_id, jefe) VALUES(?,?)');
+        (entry.Jefes || []).forEach((j) => {
+          saveJefe.run(entryId, j);
+        });
+        saveJefe.finalize();
+
+        const cfg = loadConfig();
+        const base = cfg.BASE_DIR || __dirname;
+        const dateDir = entry.Fecha;
+
+        function saveFiles(type, files) {
+          const dirMap = {
+            entrada: 'DOCS',
+            antecedente: 'DOCS_ANTECEDENTES',
+            salida: 'DOCS_SALIDA',
+          };
+          if (!files || !files.length) return;
+          const destDir = path.join(base, dirMap[type], dateDir);
+          fs.mkdirSync(destDir, { recursive: true });
+          const stmt = db.prepare('INSERT INTO files(entry_id, tipo, path) VALUES(?,?,?)');
+          files.forEach((f) => {
+            const target = path.join(destDir, path.basename(f));
+            try {
+              fs.copyFileSync(f, target);
+            } catch (e) {}
+            stmt.run(entryId, type, target);
+          });
+          stmt.finalize();
+        }
+
+        saveFiles('entrada', entry.Files || []);
+        saveFiles('antecedente', entry.Antecedentes || []);
+        saveFiles('salida', entry.Salida || []);
+
         db.close();
-        if (err) return resolve(null);
-        resolve(this.lastID);
+        resolve(entryId);
+      }
+    );
+  });
+});
+
+ipcMain.handle('get-entry', async (evt, id) => {
+  return new Promise((resolve) => {
+    const db = openDB();
+    db.get(
+      'SELECT id, Asunto, Fecha, Area, Canal, Confidencial, Urgente, Observaciones, NumeroEntrada FROM entrada WHERE id=?',
+      [id],
+      (err, row) => {
+        if (err || !row) {
+          db.close();
+          return resolve(null);
+        }
+        const entry = row;
+        db.all('SELECT area FROM destinatario WHERE entry_id=?', [id], (e1, destRows) => {
+          entry.Destinatarios = destRows ? destRows.map((r) => r.area) : [];
+          db.all('SELECT jefe FROM jefe_destinatario WHERE entry_id=?', [id], (e2, jefeRows) => {
+            entry.Jefes = jefeRows ? jefeRows.map((r) => r.jefe) : [];
+            db.all('SELECT tipo, path FROM files WHERE entry_id=?', [id], (e3, fileRows) => {
+              entry.Files = { entrada: [], antecedente: [], salida: [] };
+              if (fileRows) {
+                fileRows.forEach((r) => {
+                  entry.Files[r.tipo] = entry.Files[r.tipo] || [];
+                  entry.Files[r.tipo].push(r.path);
+                });
+              }
+              db.all(
+                'SELECT id, usuario_id, comentario, fecha, hora, visto FROM comentario WHERE entrada_id=?',
+                [id],
+                (e4, comRows) => {
+                  entry.Comentarios = comRows || [];
+                  db.close();
+                  resolve(entry);
+                }
+              );
+            });
+          });
+        });
+      }
+    );
+  });
+});
+
+ipcMain.handle('update-entry', async (evt, entry) => {
+  return new Promise((resolve) => {
+    const db = openDB();
+    db.run(
+      'UPDATE entrada SET Asunto=?, Fecha=?, Area=?, Canal=?, Confidencial=?, Urgente=?, Observaciones=?, NumeroEntrada=? WHERE id=?',
+      [
+        entry.Asunto,
+        entry.Fecha,
+        entry.Area,
+        entry.Canal,
+        entry.Confidencial ? 1 : 0,
+        entry.Urgente ? 1 : 0,
+        entry.Observaciones,
+        entry.NumeroEntrada,
+        entry.id,
+      ],
+      (err) => {
+        if (err) {
+          db.close();
+          return resolve(false);
+        }
+
+        db.run('DELETE FROM destinatario WHERE entry_id=?', [entry.id], () => {
+          const stmt = db.prepare('INSERT INTO destinatario(entry_id, area) VALUES(?,?)');
+          (entry.Destinatarios || []).forEach((d) => stmt.run(entry.id, d));
+          stmt.finalize();
+        });
+
+        db.run('DELETE FROM jefe_destinatario WHERE entry_id=?', [entry.id], () => {
+          const stmt = db.prepare('INSERT INTO jefe_destinatario(entry_id, jefe) VALUES(?,?)');
+          (entry.Jefes || []).forEach((j) => stmt.run(entry.id, j));
+          stmt.finalize();
+        });
+
+        const stmtCom = db.prepare(
+          'INSERT INTO comentario(entrada_id, usuario_id, comentario, fecha, hora, visto) VALUES(?,?,?,?,?,?)'
+        );
+        (entry.NewComments || []).forEach((c) => {
+          stmtCom.run(entry.id, c.usuario_id, c.comentario, c.fecha, c.hora, c.visto ? 1 : 0);
+        });
+        stmtCom.finalize();
+
+        const cfg = loadConfig();
+        const base = cfg.BASE_DIR || __dirname;
+        const dateDir = entry.Fecha;
+        function saveFiles(type, files) {
+          const dirMap = {
+            entrada: 'DOCS',
+            antecedente: 'DOCS_ANTECEDENTES',
+            salida: 'DOCS_SALIDA',
+          };
+          if (!files || !files.length) return;
+          const destDir = path.join(base, dirMap[type], dateDir);
+          fs.mkdirSync(destDir, { recursive: true });
+          const stmt = db.prepare('INSERT INTO files(entry_id, tipo, path) VALUES(?,?,?)');
+          files.forEach((f) => {
+            const target = path.join(destDir, path.basename(f));
+            try {
+              fs.copyFileSync(f, target);
+            } catch (e) {}
+            stmt.run(entry.id, type, target);
+          });
+          stmt.finalize();
+        }
+
+        saveFiles('entrada', entry.NewFiles ? entry.NewFiles.entrada : []);
+        saveFiles('antecedente', entry.NewFiles ? entry.NewFiles.antecedente : []);
+        saveFiles('salida', entry.NewFiles ? entry.NewFiles.salida : []);
+
+        db.close();
+        resolve(true);
+
       }
     );
   });
